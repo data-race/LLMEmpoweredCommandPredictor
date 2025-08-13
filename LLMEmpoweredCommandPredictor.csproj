@@ -14,13 +14,5 @@
   </ItemGroup>
 
   <!-- Copy additional files to the output directory -->
-  <ItemGroup>
-    <None Include="settings.yaml">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-    <None Include="prompt.md">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
 
 </Project>

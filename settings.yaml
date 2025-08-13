@@ -1,9 +1,0 @@
-# LLM API Configuration
-llmApi:
-  endpoint: "https://api.example.com/v1/completions"
-  secretKey: "your-api-key-here"  # Replace with your actual API key or use environment variables for better security
-
-# Suggestion Configuration
-suggestions:
-  maxCount: 5  # Maximum number of suggestions to produce
-  timeout: 3000  # Timeout in milliseconds

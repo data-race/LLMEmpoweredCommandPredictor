@@ -10,13 +10,9 @@ namespace LLMEmpoweredCommandPredictor;
 /// </summary>
 public class LLMSuggestionProvider : ILLMSuggestionProvider
 {
-    private readonly LLMSuggestionSettings _settings;
-
     public LLMSuggestionProvider()
     {
-        // Load settings from the YAML file
-        this._settings = LLMSuggestionSettings.LoadFromFile();
-        Console.WriteLine($"LLMSuggestionProvider initialized with settings: {this._settings.LlmApi.Endpoint}");
+        // TODO: add initialization logic
     }
 
     /// <summary>
