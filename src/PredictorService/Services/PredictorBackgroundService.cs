@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using LLMEmpoweredCommandPredictor.PredictorService.Context;
+using System.Text.Json;
 
 namespace LLMEmpoweredCommandPredictor.PredictorService.Services;
 
@@ -12,13 +13,19 @@ public class PredictorBackgroundService : BackgroundService
 {
     private readonly ILogger<PredictorBackgroundService> _logger;
     private readonly ContextManager _contextManager;
+    private readonly AzureOpenAIService? _azureOpenAIService;
+    private readonly PromptTemplateService? _promptTemplateService;
 
     public PredictorBackgroundService(
         ILogger<PredictorBackgroundService> logger,
-        ContextManager contextManager)
+        ContextManager contextManager,
+        AzureOpenAIService? azureOpenAIService = null,
+        PromptTemplateService? promptTemplateService = null)
     {
         _logger = logger;
         _contextManager = contextManager;
+        _azureOpenAIService = azureOpenAIService;
+        _promptTemplateService = promptTemplateService;
     }
 
     /// <summary>
@@ -45,7 +52,7 @@ public class PredictorBackgroundService : BackgroundService
                 // Demonstrate context collection every 60 seconds
                 if (counter % 60 == 0)
                 {
-                    await DemonstrateContextCollectionAsync(stoppingToken);
+                    await CollectContextAndPredictCommandsAsync(stoppingToken);
                 }
                 
                 // Log periodic status every 30 seconds
@@ -76,17 +83,27 @@ public class PredictorBackgroundService : BackgroundService
     /// <summary>
     /// Demonstrates context collection functionality.
     /// </summary>
-    private async Task DemonstrateContextCollectionAsync(CancellationToken cancellationToken)
+    private async Task CollectContextAndPredictCommandsAsync(CancellationToken cancellationToken)
     {
         try
         {
-            _logger.LogInformation("Demonstrating context collection...");
+            _logger.LogInformation("Demonstrating context collection and LLM integration...");
 
             // Collect context for a sample user input
             var context = await _contextManager.CollectContextAsync("Get-Process", cancellationToken);
             
             _logger.LogInformation("Context collected: {Summary}", context.GetSummary());
             _logger.LogInformation("Command history contains {Count} entries", context.CommandHistory.Count);
+
+            // If Azure OpenAI is configured, generate suggestions
+            if (_azureOpenAIService != null && _promptTemplateService != null)
+            {
+                await GenerateLLMSuggestionsAsync(context, cancellationToken);
+            }
+            else
+            {
+                _logger.LogInformation("Azure OpenAI service not configured. Skipping LLM suggestions.");
+            }
 
             // Simulate updating context with a new command
             await _contextManager.UpdateContextAsync(context, "Get-Process -Name powershell", true, cancellationToken);
@@ -96,6 +113,64 @@ public class PredictorBackgroundService : BackgroundService
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error during context collection demonstration");
+        }
+    }
+
+    /// <summary>
+    /// Generates LLM suggestions using the collected context.
+    /// </summary>
+    private async Task GenerateLLMSuggestionsAsync(PredictorContext context, CancellationToken cancellationToken)
+    {
+        try
+        {
+            _logger.LogInformation("Generating LLM suggestions...");
+
+            // Merge context with prompt template
+            var prompt = await _promptTemplateService!.MergeContextWithTemplateAsync(context);
+            _logger.LogDebug("Prompt generated with {Length} characters", prompt.Length);
+
+            // Call Azure OpenAI to get suggestions
+            var response = await _azureOpenAIService!.GenerateCommandSuggestionsAsync(prompt, cancellationToken);
+
+            // Log the response
+            if (!string.IsNullOrWhiteSpace(response))
+            {
+                _logger.LogInformation("LLM Response received:");
+                Console.WriteLine("=== LLM Command Suggestions ===");
+                
+                // Try to format as JSON for better readability
+                if (_azureOpenAIService.IsValidJsonResponse(response))
+                {
+                    try
+                    {
+                        var jsonDocument = JsonDocument.Parse(response);
+                        var formattedJson = JsonSerializer.Serialize(jsonDocument, new JsonSerializerOptions 
+                        { 
+                            WriteIndented = true 
+                        });
+                        Console.WriteLine(formattedJson);
+                    }
+                    catch
+                    {
+                        Console.WriteLine(response);
+                    }
+                }
+                else
+                {
+                    Console.WriteLine(response);
+                }
+                
+                Console.WriteLine("=== End of LLM Response ===");
+                Console.WriteLine();
+            }
+            else
+            {
+                _logger.LogWarning("Empty response received from Azure OpenAI");
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error generating LLM suggestions");
         }
     }
 

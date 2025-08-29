@@ -3,6 +3,7 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using LLMEmpoweredCommandPredictor.PredictorService.Services;
 using LLMEmpoweredCommandPredictor.PredictorService.Context;
+using LLMEmpoweredCommandPredictor.PredictorService.Configuration;
 
 namespace LLMEmpoweredCommandPredictor.PredictorService;
 
@@ -51,6 +52,50 @@ public class Program
                     
                     return contextManager;
                 });
+
+                // Configure Azure OpenAI settings (can be overridden by environment variables)
+                var azureOpenAIConfig = new AzureOpenAIConfiguration
+                {
+                    Endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? "https://yongyu-chatgpt-test1.openai.azure.com/",
+                    DeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gtp-4.1",
+                    ApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? string.Empty
+                };
+
+                // Configure prompt template settings
+                var promptConfig = new PromptConfiguration
+                {
+                    TemplatePath = Path.GetFullPath(Path.Combine(
+                        AppDomain.CurrentDomain.BaseDirectory,
+                        "..", "..", "..", "..", "Prompt", "LLMSuggestionPromptTemplateV1.txt"))
+                };
+
+                // Register Azure OpenAI service if configuration is valid
+                if (azureOpenAIConfig.IsValid())
+                {
+                    services.AddSingleton(provider =>
+                        new AzureOpenAIService(
+                            provider.GetRequiredService<ILogger<AzureOpenAIService>>(),
+                            azureOpenAIConfig.Endpoint,
+                            azureOpenAIConfig.DeploymentName,
+                            azureOpenAIConfig.ApiKey));
+                }
+                else
+                {
+                    Console.WriteLine("Azure OpenAI configuration not provided. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT environment variables to enable LLM features.");
+                }
+
+                // Register prompt template service if template exists
+                if (promptConfig.IsValid())
+                {
+                    services.AddSingleton(provider =>
+                        new PromptTemplateService(
+                            provider.GetRequiredService<ILogger<PromptTemplateService>>(),
+                            promptConfig.TemplatePath));
+                }
+                else
+                {
+                    Console.WriteLine($"Prompt template not found at: {promptConfig.TemplatePath}");
+                }
                 
                 // Register the background service
                 services.AddHostedService<PredictorBackgroundService>();
