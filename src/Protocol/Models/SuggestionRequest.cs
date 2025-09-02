@@ -11,15 +11,15 @@ public class SuggestionRequest
     /// <summary>
     /// The current user input that needs suggestions for
     /// </summary>
-    public required string UserInput { get; init; }
+    public string UserInput { get; set; } = string.Empty;
 
     /// <summary>
     /// Current working directory to provide file system context
     /// </summary>
-    public string WorkingDirectory { get; init; } = string.Empty;
+    public string WorkingDirectory { get; set; } = string.Empty;
 
     /// <summary>
     /// Maximum number of suggestions to return
     /// </summary>
-    public int MaxSuggestions { get; init; } = 5;
+    public int MaxSuggestions { get; set; } = 5;
 }
