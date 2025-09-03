@@ -1,32 +1,78 @@
+using System;
+
 namespace LLMEmpoweredCommandPredictor.Protocol.Models;
 
 /// <summary>
-/// Configuration settings for the IPC connection between client and server.
+/// Configuration settings for IPC connection behavior.
+/// Controls timeouts, retries, and connection management.
 /// </summary>
 public class ConnectionSettings
 {
     /// <summary>
-    /// RPC call timeout in milliseconds.
+    /// Timeout for individual RPC calls in milliseconds
     /// </summary>
-    public int TimeoutMs { get; init; } = 15;
+    public int TimeoutMs { get; set; } = 15;
 
     /// <summary>
-    /// Connection establishment timeout in milliseconds.
+    /// Timeout for establishing initial connection in milliseconds
     /// </summary>
-    public int ConnectionTimeoutMs { get; init; } = 1000;
+    public int ConnectionTimeoutMs { get; set; } = 1000;
 
     /// <summary>
-    /// Maximum number of retry attempts for failed connections.
+    /// Maximum number of retry attempts for failed operations
     /// </summary>
-    public int MaxRetries { get; init; } = 3;
+    public int MaxRetries { get; set; } = 3;
 
     /// <summary>
-    /// Delay between retry attempts in milliseconds.
+    /// Delay between retry attempts in milliseconds
     /// </summary>
-    public int RetryDelayMs { get; init; } = 100;
+    public int RetryDelayMs { get; set; } = 100;
 
     /// <summary>
-    /// Whether to enable detailed logging for debugging purposes.
+    /// Whether to enable connection pooling for better performance
     /// </summary>
-    public bool EnableDebugLogging { get; init; } = false;
+    public bool EnableConnectionPooling { get; set; } = false;
+
+    /// <summary>
+    /// Maximum number of connections in the pool (when pooling is enabled)
+    /// </summary>
+    public int MaxPoolSize { get; set; } = 5;
+
+    /// <summary>
+    /// Whether to automatically reconnect when connection is lost
+    /// </summary>
+    public bool EnableAutoReconnect { get; set; } = false;
+
+    /// <summary>
+    /// Whether to enable debug logging for connection operations
+    /// </summary>
+    public bool EnableDebugLogging { get; set; } = false;
+
+    /// <summary>
+    /// Creates a new connection settings instance with default values
+    /// </summary>
+    public ConnectionSettings() { }
+
+    /// <summary>
+    /// Creates a new connection settings instance with custom values
+    /// </summary>
+    public ConnectionSettings(
+        int timeoutMs = 15,
+        int connectionTimeoutMs = 1000,
+        int maxRetries = 3,
+        int retryDelayMs = 100,
+        bool enableConnectionPooling = false,
+        int maxPoolSize = 5,
+        bool enableAutoReconnect = false,
+        bool enableDebugLogging = false)
+    {
+        TimeoutMs = timeoutMs;
+        ConnectionTimeoutMs = connectionTimeoutMs;
+        MaxRetries = maxRetries;
+        RetryDelayMs = retryDelayMs;
+        EnableConnectionPooling = enableConnectionPooling;
+        MaxPoolSize = maxPoolSize;
+        EnableAutoReconnect = enableAutoReconnect;
+        EnableDebugLogging = enableDebugLogging;
+    }
 }

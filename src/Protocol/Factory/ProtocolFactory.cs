@@ -6,78 +6,160 @@ using LLMEmpoweredCommandPredictor.Protocol.Server;
 namespace LLMEmpoweredCommandPredictor.Protocol.Factory;
 
 /// <summary>
-/// Factory class for creating client and server instances with pre-configured settings.
+/// Factory for creating Protocol client and server instances with optimized configurations.
+/// Provides preset configurations for different use cases and environments.
 /// </summary>
 public static class ProtocolFactory
 {
     /// <summary>
-    /// Default connection settings optimized for production use.
+    /// Default connection settings optimized for general use
     /// </summary>
-    public static readonly ConnectionSettings DefaultSettings = new()
+    public static ConnectionSettings DefaultSettings => new()
     {
         TimeoutMs = 15,
         ConnectionTimeoutMs = 1000,
         MaxRetries = 3,
         RetryDelayMs = 100,
+        EnableConnectionPooling = false,
+        MaxPoolSize = 5,
+        EnableAutoReconnect = false,
         EnableDebugLogging = false
     };
 
     /// <summary>
-    /// Creates a new suggestion service client with default settings.
+    /// High-performance settings for production environments
     /// </summary>
-    /// <returns>Configured suggestion service client</returns>
+    public static ConnectionSettings HighPerformanceSettings => new()
+    {
+        TimeoutMs = 10,
+        ConnectionTimeoutMs = 500,
+        MaxRetries = 2,
+        RetryDelayMs = 50,
+        EnableConnectionPooling = true,
+        MaxPoolSize = 10,
+        EnableAutoReconnect = true,
+        EnableDebugLogging = false
+    };
+
+    /// <summary>
+    /// Development settings with detailed logging and relaxed timeouts
+    /// </summary>
+    public static ConnectionSettings DevelopmentSettings => new()
+    {
+        TimeoutMs = 30,
+        ConnectionTimeoutMs = 2000,
+        MaxRetries = 5,
+        RetryDelayMs = 200,
+        EnableConnectionPooling = false,
+        MaxPoolSize = 3,
+        EnableAutoReconnect = false,
+        EnableDebugLogging = true
+    };
+
+    /// <summary>
+    /// Reliable settings for critical operations with high retry counts
+    /// </summary>
+    public static ConnectionSettings ReliableSettings => new()
+    {
+        TimeoutMs = 20,
+        ConnectionTimeoutMs = 1500,
+        MaxRetries = 5,
+        RetryDelayMs = 150,
+        EnableConnectionPooling = true,
+        MaxPoolSize = 8,
+        EnableAutoReconnect = true,
+        EnableDebugLogging = false
+    };
+
+    /// <summary>
+    /// Creates a client with default settings
+    /// </summary>
     public static SuggestionServiceClient CreateClient()
     {
-        return CreateClient(DefaultSettings);
+        return new SuggestionServiceClient(DefaultSettings);
     }
 
     /// <summary>
-    /// Creates a new suggestion service client with custom settings.
+    /// Creates a client with custom settings
     /// </summary>
-    /// <param name="settings">Connection settings</param>
-    /// <returns>Configured suggestion service client</returns>
     public static SuggestionServiceClient CreateClient(ConnectionSettings settings)
     {
         return new SuggestionServiceClient(settings);
     }
 
     /// <summary>
-    /// Creates a new suggestion service client with debug logging enabled.
+    /// Creates a client optimized for high performance
     /// </summary>
-    /// <returns>Configured suggestion service client with debug logging</returns>
+    public static SuggestionServiceClient CreateHighPerformanceClient()
+    {
+        return new SuggestionServiceClient(HighPerformanceSettings);
+    }
+
+    /// <summary>
+    /// Creates a client optimized for development and debugging
+    /// </summary>
+    public static SuggestionServiceClient CreateDevelopmentClient()
+    {
+        return new SuggestionServiceClient(DevelopmentSettings);
+    }
+
+    /// <summary>
+    /// Creates a client optimized for reliability over performance
+    /// </summary>
+    public static SuggestionServiceClient CreateReliableClient()
+    {
+        return new SuggestionServiceClient(ReliableSettings);
+    }
+
+    /// <summary>
+    /// Creates a debug client with detailed logging enabled
+    /// </summary>
     public static SuggestionServiceClient CreateDebugClient()
     {
         var debugSettings = new ConnectionSettings
         {
-            TimeoutMs = DefaultSettings.TimeoutMs,
-            ConnectionTimeoutMs = DefaultSettings.ConnectionTimeoutMs,
-            MaxRetries = DefaultSettings.MaxRetries,
-            RetryDelayMs = DefaultSettings.RetryDelayMs,
+            TimeoutMs = 60,
+            ConnectionTimeoutMs = 5000,
+            MaxRetries = 3,
+            RetryDelayMs = 500,
+            EnableConnectionPooling = false,
+            MaxPoolSize = 2,
+            EnableAutoReconnect = false,
             EnableDebugLogging = true
         };
-        return CreateClient(debugSettings);
+        
+        return new SuggestionServiceClient(debugSettings);
     }
 
     /// <summary>
-    /// Creates a new suggestion service server with default configuration.
+    /// Creates a server with the specified service implementation
     /// </summary>
-    /// <param name="service">The suggestion service implementation</param>
-    /// <returns>Configured suggestion service server</returns>
-    public static SuggestionServiceServer CreateServer(ISuggestionService service)
-    {
-        return CreateServer(service, "LLMEmpoweredCommandPredictor.SuggestionService");
-    }
-
-    /// <summary>
-    /// Creates a new suggestion service server with custom pipe name.
-    /// </summary>
-    /// <param name="service">The suggestion service implementation</param>
-    /// <param name="pipeName">Named pipe name for communication</param>
-    /// <returns>Configured suggestion service server</returns>
-    public static SuggestionServiceServer CreateServer(
-        ISuggestionService service,
-        string pipeName)
+    public static SuggestionServiceServer CreateServer(ISuggestionService service, string pipeName)
     {
         return new SuggestionServiceServer(service, pipeName);
+    }
+
+    /// <summary>
+    /// Creates a server with default pipe name
+    /// </summary>
+    public static SuggestionServiceServer CreateServer(ISuggestionService service)
+    {
+        return new SuggestionServiceServer(service, "LLMEmpoweredCommandPredictor");
+    }
+
+    /// <summary>
+    /// Creates a server with custom pipe name and advanced configuration
+    /// </summary>
+    public static SuggestionServiceServer CreateServer(
+        ISuggestionService service, 
+        string pipeName, 
+        bool enableLogging = true)
+    {
+        var server = new SuggestionServiceServer(service, pipeName);
+        
+        // In the future, we could add more server configuration here
+        // For now, we'll keep it simple but extensible
+        
+        return server;
     }
 }
