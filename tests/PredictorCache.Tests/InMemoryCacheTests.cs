@@ -1,7 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Management.Automation.Subsystem.Prediction;
 using System.Threading;
 using System.Threading.Tasks;
 using LLMEmpoweredCommandPredictor.PredictorCache;
@@ -57,29 +55,26 @@ public class InMemoryCacheTests : IDisposable
     }
 
     [Fact]
-    public async Task SetAsync_AndGetAsync_ReturnsStoredSuggestions()
+    public async Task SetAsync_AndGetAsync_ReturnsStoredResponse()
     {
         // Arrange
-        var suggestions = CreateTestSuggestions("test1", "test2");
+        var response = "test response with multiple suggestions";
         var key = "test-key";
-        var ttl = TimeSpan.FromMinutes(10);
 
         // Act
-        await cache.SetAsync(key, suggestions, ttl);
+        await cache.SetAsync(key, response);
         var result = await cache.GetAsync(key);
 
         // Assert
         Assert.NotNull(result);
-        Assert.Equal(2, result.Count);
-        Assert.Equal("test1", result[0].SuggestionText);
-        Assert.Equal("test2", result[1].SuggestionText);
+        Assert.Equal(response, result);
     }
 
     [Fact]
-    public async Task SetAsync_WithNullSuggestions_DoesNotStore()
+    public async Task SetAsync_WithNullResponse_DoesNotStore()
     {
         // Act
-        await cache.SetAsync("key", null, TimeSpan.FromMinutes(10));
+        await cache.SetAsync("key", null);
         var result = await cache.GetAsync("key");
 
         // Assert
@@ -87,10 +82,10 @@ public class InMemoryCacheTests : IDisposable
     }
 
     [Fact]
-    public async Task SetAsync_WithEmptySuggestions_DoesNotStore()
+    public async Task SetAsync_WithEmptyResponse_DoesNotStore()
     {
         // Act
-        await cache.SetAsync("key", new List<PredictiveSuggestion>(), TimeSpan.FromMinutes(10));
+        await cache.SetAsync("key", "");
         var result = await cache.GetAsync("key");
 
         // Assert
@@ -100,15 +95,22 @@ public class InMemoryCacheTests : IDisposable
     [Fact]
     public async Task GetAsync_WithExpiredEntry_ReturnsNull()
     {
-        // Arrange
-        var suggestions = CreateTestSuggestions("test");
+        // Arrange - Create cache with very short TTL
+        var shortTtlConfig = new CacheConfiguration
+        {
+            DefaultTtl = TimeSpan.FromMilliseconds(50),
+            EnableBackgroundCleanup = true,
+            CleanupInterval = TimeSpan.FromMilliseconds(25)
+        };
+        using var shortTtlCache = new InMemoryCache(shortTtlConfig);
+        
+        var response = "test response";
         var key = "expired-key";
-        var shortTtl = TimeSpan.FromMilliseconds(50);
 
         // Act
-        await cache.SetAsync(key, suggestions, shortTtl);
+        await shortTtlCache.SetAsync(key, response);
         await Task.Delay(100); // Wait for expiration
-        var result = await cache.GetAsync(key);
+        var result = await shortTtlCache.GetAsync(key);
 
         // Assert
         Assert.Null(result);
@@ -118,10 +120,10 @@ public class InMemoryCacheTests : IDisposable
     public async Task RemoveAsync_RemovesEntry()
     {
         // Arrange
-        var suggestions = CreateTestSuggestions("test");
+        var response = "test response";
         var key = "remove-key";
 
-        await cache.SetAsync(key, suggestions, TimeSpan.FromMinutes(10));
+        await cache.SetAsync(key, response);
         
         // Verify it exists
         var beforeRemove = await cache.GetAsync(key);
@@ -139,8 +141,8 @@ public class InMemoryCacheTests : IDisposable
     public async Task ClearAsync_RemovesAllEntries()
     {
         // Arrange
-        await cache.SetAsync("key1", CreateTestSuggestions("test1"), TimeSpan.FromMinutes(10));
-        await cache.SetAsync("key2", CreateTestSuggestions("test2"), TimeSpan.FromMinutes(10));
+        await cache.SetAsync("key1", "response1");
+        await cache.SetAsync("key2", "response2");
 
         // Verify entries exist
         Assert.NotNull(await cache.GetAsync("key1"));
@@ -160,11 +162,11 @@ public class InMemoryCacheTests : IDisposable
         // Arrange - Fill cache to capacity
         for (int i = 0; i < testConfig.MaxCapacity; i++)
         {
-            await cache.SetAsync($"key{i}", CreateTestSuggestions($"test{i}"), TimeSpan.FromMinutes(10));
+            await cache.SetAsync($"key{i}", $"response{i}");
         }
 
         // Act - Add one more entry to trigger eviction
-        await cache.SetAsync("new-key", CreateTestSuggestions("new-test"), TimeSpan.FromMinutes(10));
+        await cache.SetAsync("new-key", "new-response");
 
         // Assert - First entry should be evicted
         Assert.Null(await cache.GetAsync("key0"));
@@ -181,19 +183,19 @@ public class InMemoryCacheTests : IDisposable
     public async Task LRU_AccessOrder_UpdatesCorrectly()
     {
         // Arrange
-        await cache.SetAsync("key1", CreateTestSuggestions("test1"), TimeSpan.FromMinutes(10));
-        await cache.SetAsync("key2", CreateTestSuggestions("test2"), TimeSpan.FromMinutes(10));
-        await cache.SetAsync("key3", CreateTestSuggestions("test3"), TimeSpan.FromMinutes(10));
+        await cache.SetAsync("key1", "response1");
+        await cache.SetAsync("key2", "response2");
+        await cache.SetAsync("key3", "response3");
 
         // Act - Access key1 to make it most recently used
         await cache.GetAsync("key1");
 
         // Fill remaining capacity
-        await cache.SetAsync("key4", CreateTestSuggestions("test4"), TimeSpan.FromMinutes(10));
-        await cache.SetAsync("key5", CreateTestSuggestions("test5"), TimeSpan.FromMinutes(10));
+        await cache.SetAsync("key4", "response4");
+        await cache.SetAsync("key5", "response5");
 
         // Add one more to trigger eviction
-        await cache.SetAsync("key6", CreateTestSuggestions("test6"), TimeSpan.FromMinutes(10));
+        await cache.SetAsync("key6", "response6");
 
         // Assert - key2 should be evicted (oldest unused), key1 should remain
         Assert.Null(await cache.GetAsync("key2"));
@@ -218,8 +220,8 @@ public class InMemoryCacheTests : IDisposable
     public async Task GetStatistics_TracksHitsAndMisses()
     {
         // Arrange
-        var suggestions = CreateTestSuggestions("test");
-        await cache.SetAsync("hit-key", suggestions, TimeSpan.FromMinutes(10));
+        var response = "test response";
+        await cache.SetAsync("hit-key", response);
 
         // Act - Generate hits and misses
         await cache.GetAsync("hit-key"); // Hit
@@ -241,13 +243,10 @@ public class InMemoryCacheTests : IDisposable
     public async Task GetStatistics_TracksMemoryUsage()
     {
         // Arrange
-        var largeSuggestions = CreateTestSuggestions(
-            new string('a', 1000), 
-            new string('b', 1000)
-        );
+        var largeResponse = new string('a', 1000) + "|" + new string('b', 1000);
 
         // Act
-        await cache.SetAsync("large-key", largeSuggestions, TimeSpan.FromMinutes(10));
+        await cache.SetAsync("large-key", largeResponse);
         var stats = cache.GetStatistics();
 
         // Assert
@@ -258,18 +257,30 @@ public class InMemoryCacheTests : IDisposable
     [Fact]
     public async Task BackgroundCleanup_RemovesExpiredEntries()
     {
-        // Arrange
-        var shortLivedSuggestions = CreateTestSuggestions("short");
-        var longLivedSuggestions = CreateTestSuggestions("long");
+        // Arrange - Create cache with very short TTL for this test
+        var shortTtlConfig = new CacheConfiguration
+        {
+            DefaultTtl = TimeSpan.FromMilliseconds(50),
+            EnableBackgroundCleanup = true,
+            CleanupInterval = TimeSpan.FromMilliseconds(25)
+        };
+        using var shortTtlCache = new InMemoryCache(shortTtlConfig);
+        
+        var shortLivedResponse = "short response";
+        var longLivedResponse = "long response";
 
-        await cache.SetAsync("short-key", shortLivedSuggestions, TimeSpan.FromMilliseconds(50));
-        await cache.SetAsync("long-key", longLivedSuggestions, TimeSpan.FromMinutes(10));
+        // Set short-lived entry first
+        await shortTtlCache.SetAsync("short-key", shortLivedResponse);
+        
+        // Wait a bit, then set long-lived entry with different cache instance that has longer TTL
+        await Task.Delay(25);
+        await cache.SetAsync("long-key", longLivedResponse);
 
-        // Act - Wait for cleanup to run
-        await Task.Delay(200);
+        // Act - Wait for cleanup to run on short TTL cache
+        await Task.Delay(100);
 
         // Assert
-        Assert.Null(await cache.GetAsync("short-key"));
+        Assert.Null(await shortTtlCache.GetAsync("short-key"));
         Assert.NotNull(await cache.GetAsync("long-key"));
     }
 
@@ -279,7 +290,7 @@ public class InMemoryCacheTests : IDisposable
         // Arrange - Use cache with higher capacity for this test
         using var largeCache = new InMemoryCache(new CacheConfiguration { MaxCapacity = 20 });
         var tasks = new List<Task>();
-        var suggestions = CreateTestSuggestions("concurrent");
+        var response = "concurrent response";
 
         // Act - Multiple concurrent operations
         for (int i = 0; i < 10; i++)
@@ -287,7 +298,7 @@ public class InMemoryCacheTests : IDisposable
             int index = i;
             tasks.Add(Task.Run(async () =>
             {
-                await largeCache.SetAsync($"concurrent-key-{index}", suggestions, TimeSpan.FromMinutes(10));
+                await largeCache.SetAsync($"concurrent-key-{index}", $"{response}-{index}");
                 await largeCache.GetAsync($"concurrent-key-{index}");
             }));
         }
@@ -299,6 +310,7 @@ public class InMemoryCacheTests : IDisposable
         {
             var result = await largeCache.GetAsync($"concurrent-key-{i}");
             Assert.NotNull(result);
+            Assert.Equal($"{response}-{i}", result);
         }
     }
 
@@ -314,19 +326,18 @@ public class InMemoryCacheTests : IDisposable
     {
         // Arrange
         var key = "update-key";
-        var originalSuggestions = CreateTestSuggestions("original");
-        var updatedSuggestions = CreateTestSuggestions("updated");
+        var originalResponse = "original response";
+        var updatedResponse = "updated response";
 
         // Act
-        await cache.SetAsync(key, originalSuggestions, TimeSpan.FromMinutes(10));
-        await cache.SetAsync(key, updatedSuggestions, TimeSpan.FromMinutes(10));
+        await cache.SetAsync(key, originalResponse);
+        await cache.SetAsync(key, updatedResponse);
 
         var result = await cache.GetAsync(key);
 
         // Assert
         Assert.NotNull(result);
-        Assert.Single(result);
-        Assert.Equal("updated", result[0].SuggestionText);
+        Assert.Equal(updatedResponse, result);
     }
 
     [Fact]
@@ -338,11 +349,6 @@ public class InMemoryCacheTests : IDisposable
 
         // Assert
         Assert.True(stats.Uptime.TotalMilliseconds >= 50);
-    }
-
-    private static IReadOnlyList<PredictiveSuggestion> CreateTestSuggestions(params string[] texts)
-    {
-        return texts.Select(text => new PredictiveSuggestion(text)).ToList().AsReadOnly();
     }
 
     public void Dispose()

@@ -13,21 +13,20 @@ namespace LLMEmpoweredCommandPredictor.PredictorCache;
 public interface ICacheService
 {
     /// <summary>
-    /// Gets cached suggestions for the given cache key.
+    /// Gets cached string response for the given cache key.
     /// </summary>
     /// <param name="cacheKey">The cache key to look up</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    /// <returns>Cached suggestions or null if not found/expired</returns>
-    Task<IReadOnlyList<PredictiveSuggestion>?> GetAsync(string cacheKey, CancellationToken cancellationToken = default);
+    /// <returns>Cached response or null if not found/expired</returns>
+    Task<string?> GetAsync(string cacheKey, CancellationToken cancellationToken = default);
 
     /// <summary>
-    /// Stores suggestions in the cache with the given key.
+    /// Stores string response in the cache with the given key.
     /// </summary>
     /// <param name="cacheKey">The cache key to store under</param>
-    /// <param name="suggestions">The suggestions to cache</param>
-    /// <param name="ttl">Time-to-live for the cache entry</param>
+    /// <param name="response">The response to cache</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    Task SetAsync(string cacheKey, IReadOnlyList<PredictiveSuggestion> suggestions, TimeSpan ttl, CancellationToken cancellationToken = default);
+    Task SetAsync(string cacheKey, string response, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Removes a specific cache entry.
