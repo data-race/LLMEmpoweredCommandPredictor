@@ -39,10 +39,15 @@ public class CacheConfiguration
 /// </summary>
 internal class CacheEntry
 {
-    public required IReadOnlyList<PredictiveSuggestion> Suggestions { get; init; }
+    public string Response { get; init; }
     public DateTime ExpirationTime { get; init; }
     public DateTime LastAccessTime { get; set; }
     public DateTime CreatedTime { get; init; }
+    
+    public CacheEntry(string response)
+    {
+        Response = response ?? throw new ArgumentNullException(nameof(response));
+    }
     
     public bool IsExpired => DateTime.UtcNow > ExpirationTime;
     
@@ -50,10 +55,10 @@ internal class CacheEntry
     {
         get
         {
-            // Rough estimation: each suggestion text + metadata overhead
-            var textSize = Suggestions.Sum(s => (s.SuggestionText?.Length ?? 0) * 2); // UTF-16
-            var overhead = Suggestions.Count * 100; // Object overhead estimation
-            return textSize + overhead + 200; // Entry overhead
+            // Rough estimation: response text size + object overhead
+            // Multiplies by 2 because .NET strings use UTF-16 encoding (2 bytes per character)
+            var textSize = Response.Length * 2; // UTF-16
+            return textSize + 200; // Entry overhead
         }
     }
 }
@@ -111,7 +116,7 @@ public class InMemoryCache : ICacheService, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task<IReadOnlyList<PredictiveSuggestion>?> GetAsync(string cacheKey, CancellationToken cancellationToken = default)
+    public async Task<string?> GetAsync(string cacheKey, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(cacheKey))
             return null;
@@ -135,7 +140,7 @@ public class InMemoryCache : ICacheService, IDisposable
             UpdateAccessOrder(cacheKey);
             
             Interlocked.Increment(ref cacheHits);
-            return entry.Suggestions;
+            return entry.Response;
         }
 
         Interlocked.Increment(ref cacheMisses);
@@ -143,16 +148,15 @@ public class InMemoryCache : ICacheService, IDisposable
     }
 
     /// <inheritdoc />
-    public async Task SetAsync(string cacheKey, IReadOnlyList<PredictiveSuggestion> suggestions, TimeSpan ttl, CancellationToken cancellationToken = default)
+    public async Task SetAsync(string cacheKey, string response, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrEmpty(cacheKey) || suggestions == null || suggestions.Count == 0)
+        if (string.IsNullOrEmpty(cacheKey) || string.IsNullOrEmpty(response))
             return;
 
         var now = DateTime.UtcNow;
-        var entry = new CacheEntry
+        var entry = new CacheEntry(response)
         {
-            Suggestions = suggestions,
-            ExpirationTime = now.Add(ttl),
+            ExpirationTime = now.Add(config.DefaultTtl),
             LastAccessTime = now,
             CreatedTime = now
         };
