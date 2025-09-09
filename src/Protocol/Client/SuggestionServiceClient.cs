@@ -68,7 +68,7 @@ public class SuggestionServiceClient : IDisposable
             // Log error if debug logging is enabled
             if (_settings.EnableDebugLogging)
             {
-#pragma warning disable VSTHRD103 // WriteLine synchronously blocks
+#pragma warning disable VSTHRD103 // Call async methods when in an async method
                 Console.Error.WriteLine($"[SuggestionServiceClient] Error: {ex.Message}");
 #pragma warning restore VSTHRD103
             }

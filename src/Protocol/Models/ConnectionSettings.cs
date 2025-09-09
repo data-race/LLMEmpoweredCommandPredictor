@@ -29,24 +29,10 @@ public class ConnectionSettings
     public int RetryDelayMs { get; set; } = 100;
 
     /// <summary>
-    /// Whether to enable connection pooling for better performance
-    /// </summary>
-    public bool EnableConnectionPooling { get; set; } = false;
-
-    /// <summary>
-    /// Maximum number of connections in the pool (when pooling is enabled)
-    /// </summary>
-    public int MaxPoolSize { get; set; } = 5;
-
-    /// <summary>
-    /// Whether to automatically reconnect when connection is lost
-    /// </summary>
-    public bool EnableAutoReconnect { get; set; } = false;
-
-    /// <summary>
     /// Whether to enable debug logging for connection operations
     /// </summary>
     public bool EnableDebugLogging { get; set; } = false;
+
 
     /// <summary>
     /// Creates a new connection settings instance with default values
@@ -61,18 +47,12 @@ public class ConnectionSettings
         int connectionTimeoutMs = 1000,
         int maxRetries = 3,
         int retryDelayMs = 100,
-        bool enableConnectionPooling = false,
-        int maxPoolSize = 5,
-        bool enableAutoReconnect = false,
         bool enableDebugLogging = false)
     {
         TimeoutMs = timeoutMs;
         ConnectionTimeoutMs = connectionTimeoutMs;
         MaxRetries = maxRetries;
         RetryDelayMs = retryDelayMs;
-        EnableConnectionPooling = enableConnectionPooling;
-        MaxPoolSize = maxPoolSize;
-        EnableAutoReconnect = enableAutoReconnect;
         EnableDebugLogging = enableDebugLogging;
     }
 }
