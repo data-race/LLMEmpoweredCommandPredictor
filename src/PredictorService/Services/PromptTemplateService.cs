@@ -100,7 +100,7 @@ public class PromptTemplateService
                     : string.Empty,
                 EnvironmentVariables = new Dictionary<string, string>(), // No data available in PredictorContext
                 CommandExecutionTime = context.CommandHistory.Count > 0 && context.CommandHistory.First().Duration.HasValue
-                    ? $"{context.CommandHistory.First().Duration.Value.TotalSeconds:F1}s"
+                    ? $"{context.CommandHistory.First().Duration!.Value.TotalSeconds:F1}s"
                     : string.Empty,
                 CommandFrequency = context.CommandHistory
                     .GroupBy(h => h.Command.Split(' ').FirstOrDefault() ?? h.Command)

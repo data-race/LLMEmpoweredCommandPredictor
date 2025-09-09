@@ -28,12 +28,15 @@ dotnet build src/PredictorPlugin/ -c Release
 
 ### Step 4: Load Module in New PowerShell Terminal
 
+Use the test script:
 ```powershell
-# Import Protocol module (if needed)
-Import-Module ".\src\Protocol\bin\Release\net6.0\LLMEmpoweredCommandPredictor.Protocol.dll" -Verbose
+pwsh -File TestConnection.ps1
+```
 
+Or manually:
+```powershell
 # Import PredictorPlugin module
-Import-Module ".\src\PredictorPlugin\bin\Release\net6.0\LLMEmpoweredCommandPredictor.dll" -Verbose
+Import-Module ".\src\PredictorPlugin\bin\Release\LLMEmpoweredCommandPredictor\net6.0\LLMEmpoweredCommandPredictor.psd1" -Force
 
 # Enable plugin prediction
 Set-PSReadLineOption -PredictionSource HistoryAndPlugin
