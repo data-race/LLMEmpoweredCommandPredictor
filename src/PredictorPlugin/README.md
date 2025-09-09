@@ -1,8 +1,18 @@
-## LLM Emphasisered Command Predictor
+## LLM Empowered Command Predictor
 
-### Prerequisites
 This project provides a command predictor that leverages large language models (LLMs) to suggest commands based on user input.
 
+### Module Information
+- **Module Name**: LLMEmpoweredCommandPredictor
+- **Module GUID**: `1cda7101-34d4-4efd-887f-1923ff2b4b6e`
+- **Version**: 1.0.0
+- **PowerShell Manifest**: `LLMEmpoweredCommandPredictor.psd1`
+
+The module manifest (`.psd1` file) is required for PowerShell to properly load the module. The GUID uniquely identifies this module and should remain consistent across all installations.
+
+**Note**: If you find any inaccurate information in the `LLMEmpoweredCommandPredictor.psd1` file (such as author information, company name, or other metadata), please feel free to modify it as needed. The manifest file can be updated to reflect the correct project information for your specific use case.
+
+### Prerequisites
 You need to have the following prerequisites installed:
 - .NET SDK (version 6.0 or later)
 - PowerShell 7 or later
