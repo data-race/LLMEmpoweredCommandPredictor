@@ -86,6 +86,7 @@ public class CommandHistoryContextProvider : IContextProvider
                 UserInput = userInput ?? string.Empty,
                 WorkingDirectory = Environment.CurrentDirectory,
                 CommandHistory = historyEntries,
+                SessionHistory = Array.Empty<CommandHistoryEntry>(), // This provider doesn't handle session history
                 Timestamp = DateTime.UtcNow,
                 SessionId = Environment.MachineName + "_" + Environment.UserName,
                 PowerShellVersion = "7.0+", // Could be detected more accurately
@@ -242,6 +243,7 @@ public class CommandHistoryContextProvider : IContextProvider
             UserInput = userInput ?? string.Empty,
             WorkingDirectory = Environment.CurrentDirectory,
             CommandHistory = Array.Empty<CommandHistoryEntry>(),
+            SessionHistory = Array.Empty<CommandHistoryEntry>(),
             Timestamp = DateTime.UtcNow,
             SessionId = "unavailable",
             PowerShellVersion = "unknown",

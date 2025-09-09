@@ -25,6 +25,11 @@ public class PredictorContext
     public IReadOnlyList<CommandHistoryEntry> CommandHistory { get; set; } = Array.Empty<CommandHistoryEntry>();
 
     /// <summary>
+    /// Session-specific command history from the current PowerShell session (most recent first)
+    /// </summary>
+    public IReadOnlyList<CommandHistoryEntry> SessionHistory { get; set; } = Array.Empty<CommandHistoryEntry>();
+
+    /// <summary>
     /// Timestamp when this context was collected
     /// </summary>
     public DateTime Timestamp { get; set; } = DateTime.UtcNow;
@@ -50,7 +55,7 @@ public class PredictorContext
     public string GetSummary()
     {
         return $"UserInput: '{UserInput}', WorkingDir: '{WorkingDirectory}', " +
-               $"HistoryCount: {CommandHistory.Count}, Session: {SessionId}";
+               $"GlobalHistoryCount: {CommandHistory.Count}, SessionHistoryCount: {SessionHistory.Count}, Session: {SessionId}";
     }
 }
 

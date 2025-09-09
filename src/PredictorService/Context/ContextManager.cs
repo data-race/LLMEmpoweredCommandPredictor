@@ -250,12 +250,52 @@ public class ContextManager : IDisposable
             return CreateFallbackContext(userInput);
         }
 
-        // Take the first context as base and merge others into it
-        var primaryContext = contexts[0];
-        
-        // For now, we just use the primary context
-        // In the future, we could merge data from multiple providers
-        return primaryContext;
+        // Create a merged context combining data from all providers
+        var mergedContext = new PredictorContext
+        {
+            UserInput = userInput ?? string.Empty,
+            WorkingDirectory = Environment.CurrentDirectory,
+            Timestamp = DateTime.UtcNow,
+            SessionId = contexts.FirstOrDefault()?.SessionId ?? "merged",
+            PowerShellVersion = contexts.FirstOrDefault()?.PowerShellVersion ?? "unknown",
+            OperatingSystem = contexts.FirstOrDefault()?.OperatingSystem ?? Environment.OSVersion.ToString()
+        };
+
+        // Merge command history from all contexts
+        var allCommandHistory = new List<CommandHistoryEntry>();
+        var allSessionHistory = new List<CommandHistoryEntry>();
+
+        foreach (var context in contexts)
+        {
+            if (context.CommandHistory?.Any() == true)
+            {
+                allCommandHistory.AddRange(context.CommandHistory);
+            }
+
+            if (context.SessionHistory?.Any() == true)
+            {
+                allSessionHistory.AddRange(context.SessionHistory);
+            }
+        }
+
+        // Sort and deduplicate command history
+        mergedContext.CommandHistory = allCommandHistory
+            .GroupBy(h => new { h.Command, h.ExecutedAt })
+            .Select(g => g.First())
+            .OrderBy(h => h.ExecutedAt)
+            .ToList();
+
+        // Sort and deduplicate session history
+        mergedContext.SessionHistory = allSessionHistory
+            .GroupBy(h => new { h.Command, h.ExecutedAt })
+            .Select(g => g.First())
+            .OrderBy(h => h.ExecutedAt)
+            .ToList();
+
+        _logger.LogDebug("Merged context: Global history: {GlobalCount}, Session history: {SessionCount}", 
+            mergedContext.CommandHistory.Count, mergedContext.SessionHistory.Count);
+
+        return mergedContext;
     }
 
     private PredictorContext CreateFallbackContext(string userInput)
@@ -265,6 +305,7 @@ public class ContextManager : IDisposable
             UserInput = userInput ?? string.Empty,
             WorkingDirectory = Environment.CurrentDirectory,
             CommandHistory = Array.Empty<CommandHistoryEntry>(),
+            SessionHistory = Array.Empty<CommandHistoryEntry>(),
             Timestamp = DateTime.UtcNow,
             SessionId = "fallback",
             PowerShellVersion = "unknown",

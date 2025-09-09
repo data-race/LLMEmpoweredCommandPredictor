@@ -39,6 +39,7 @@ public class Program
             {
                 // Register context providers
                 services.AddSingleton<CommandHistoryContextProvider>();
+                services.AddSingleton<SessionHistoryContextProvider>();
                 
                 // Register context manager and configure it
                 services.AddSingleton<ContextManager>(serviceProvider =>
@@ -46,9 +47,13 @@ public class Program
                     var logger = serviceProvider.GetRequiredService<ILogger<ContextManager>>();
                     var contextManager = new ContextManager(logger);
                     
-                    // Register the command history provider
+                    // Register the global command history provider
                     var historyProvider = serviceProvider.GetRequiredService<CommandHistoryContextProvider>();
                     contextManager.RegisterProvider(historyProvider);
+                    
+                    // Register the session history provider
+                    var sessionHistoryProvider = serviceProvider.GetRequiredService<SessionHistoryContextProvider>();
+                    contextManager.RegisterProvider(sessionHistoryProvider);
                     
                     return contextManager;
                 });
