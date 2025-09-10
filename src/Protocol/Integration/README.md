@@ -16,21 +16,9 @@ Provides IPC communication for Plugin. Includes synchronous/asynchronous API, au
 ### CachedServiceBridge (`Integration/CachedServiceBridge.cs`)
 Adds caching layer to any ISuggestionService implementation. Handles cache key generation, TTL management, and cache hit/miss logic.
 
-## Test Files
+## Testing
 
-### FinalTest.ps1
-Main test script that:
-- Enables PowerShell experimental feature PSSubsystemPluginModel
-- Builds Protocol and PredictorPlugin projects
-- Loads the plugin module
-- Configures PSReadLine for prediction
+### TestConnection.ps1
+Connection test script that loads the PowerShell module and enables predictions.
 
-Run: `pwsh -File FinalTest.ps1`
-
-### VerifyCache.ps1
-Cache verification script that:
-- Loads the plugin module
-- Provides step-by-step cache testing instructions
-- Explains how to observe cache hit/miss behavior through response times
-
-Run: `pwsh -File VerifyCache.ps1`
+Run: `pwsh -File TestConnection.ps1`

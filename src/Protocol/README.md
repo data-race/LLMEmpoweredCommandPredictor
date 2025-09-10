@@ -36,14 +36,9 @@ var server = ProtocolFactory.CreateCachedServer(backend, cache, keyGenerator);
 await server.StartAsync();
 ```
 
-## Test Files
+## Testing
 
-### FinalTest.ps1
-Main test script that enables PowerShell experimental features, builds projects, and loads the plugin module.
+### TestConnection.ps1
+Connection test script that loads the PowerShell module and enables predictions.
 
-Run: `pwsh -File FinalTest.ps1`
-
-### VerifyCache.ps1  
-Cache verification script that provides instructions for testing cache hit/miss behavior.
-
-Run: `pwsh -File VerifyCache.ps1`
+Run: `pwsh -File TestConnection.ps1`

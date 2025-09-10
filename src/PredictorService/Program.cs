@@ -4,6 +4,8 @@ using Microsoft.Extensions.Logging;
 using LLMEmpoweredCommandPredictor.PredictorService.Services;
 using LLMEmpoweredCommandPredictor.PredictorService.Context;
 using LLMEmpoweredCommandPredictor.PredictorService.Configuration;
+using LLMEmpoweredCommandPredictor.Protocol.Integration;
+using LLMEmpoweredCommandPredictor.Protocol.Factory;
 
 namespace LLMEmpoweredCommandPredictor.PredictorService;
 
@@ -101,6 +103,11 @@ public class Program
                 {
                     Console.WriteLine($"Prompt template not found at: {promptConfig.TemplatePath}");
                 }
+                
+                // Register Protocol server backend
+                services.AddSingleton<IServiceBackend, PredictorServiceBackend>();
+                services.AddSingleton<ServiceBridge>();
+                services.AddHostedService<ProtocolServerHost>();
                 
                 // Register the background service
                 services.AddHostedService<PredictorBackgroundService>();

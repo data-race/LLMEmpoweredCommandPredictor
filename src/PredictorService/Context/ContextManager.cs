@@ -166,7 +166,9 @@ public class ContextManager : IDisposable
 
         try
         {
+#pragma warning disable VSTHRD002 // Synchronously waiting on tasks or awaiters may cause deadlocks
             Task.WaitAll(disposeTasks.ToArray(), TimeSpan.FromSeconds(5));
+#pragma warning restore VSTHRD002
         }
         catch (Exception ex)
         {

@@ -2,6 +2,8 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Management.Automation.Subsystem.Prediction;
 using System;
+using System.Linq;
+using LLMEmpoweredCommandPredictor.Protocol.Integration;
 
 namespace LLMEmpoweredCommandPredictor;
 
@@ -10,9 +12,11 @@ namespace LLMEmpoweredCommandPredictor;
 /// </summary>
 public class LLMSuggestionProvider : ILLMSuggestionProvider
 {
+    private readonly PluginHelper _pluginHelper;
+
     public LLMSuggestionProvider()
     {
-        // TODO: add initialization logic
+        _pluginHelper = new PluginHelper();
     }
 
     /// <summary>
@@ -23,11 +27,15 @@ public class LLMSuggestionProvider : ILLMSuggestionProvider
     /// <returns>A list of predictive suggestions.</returns>
     public List<PredictiveSuggestion> GetSuggestions(LLMSuggestionContext context, CancellationToken cancellationToken)
     {
-        // Implementation will be added later
-        return new List<PredictiveSuggestion>{
-                new(string.Concat(context.UserInput, " HELLO WORLD 1"), "Test tool tip"),
-                new(string.Concat(context.UserInput, " HELLO WORLD 2")),
-                new(string.Concat(context.UserInput, " HELLO WORLD 3"))
+        try
+        {
+            return _pluginHelper.GetSuggestions(context, 5, cancellationToken).ToList();
+        }
+        catch
+        {
+            return new List<PredictiveSuggestion>{
+                new(string.Concat(context.UserInput, " (fallback)"))
             };
+        }
     }
 }
