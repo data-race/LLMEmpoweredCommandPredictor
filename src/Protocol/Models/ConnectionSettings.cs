@@ -10,9 +10,9 @@ public class ConnectionSettings
 {
     /// <summary>
     /// Timeout for individual RPC calls in milliseconds
-    /// Must be under 20ms to respect PowerShell predictor constraints
+    /// PowerShell predictor constraint is 20ms
     /// </summary>
-    public int TimeoutMs { get; set; } = 18;
+    public int TimeoutMs { get; set; } = 20;
 
     /// <summary>
     /// Timeout for establishing initial connection in milliseconds
@@ -44,7 +44,7 @@ public class ConnectionSettings
     /// Creates a new connection settings instance with custom values
     /// </summary>
     public ConnectionSettings(
-        int timeoutMs = 18,
+        int timeoutMs = 20,
         int connectionTimeoutMs = 1000,
         int maxRetries = 3,
         int retryDelayMs = 100,
