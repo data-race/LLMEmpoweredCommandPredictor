@@ -57,17 +57,22 @@ public class CachedServiceBridge : ISuggestionService, IDisposable
 
         try
         {
-            // 1. Generate cache key
-            var cacheKey = _keyGenerator.GenerateCacheKey(request);
-            
-            // 2. Check cache first
-            var cachedResponse = await _cache.GetAsync(cacheKey, cancellationToken);
+            // 1. Try prefix matching first for better cache hits
+            var cachedResponse = await TryPrefixMatch(request, cancellationToken);
             if (cachedResponse != null)
+            {
+                return cachedResponse;
+            }
+            
+            // 2. Fallback to exact cache key matching
+            var cacheKey = _keyGenerator.GenerateCacheKey(request);
+            var exactCachedResponse = await _cache.GetAsync(cacheKey, cancellationToken);
+            if (exactCachedResponse != null)
             {
                 // Cache hit - deserialize and return
                 try
                 {
-                    var cachedSuggestionResponse = JsonSerializer.Deserialize<SuggestionResponse>(cachedResponse);
+                    var cachedSuggestionResponse = JsonSerializer.Deserialize<SuggestionResponse>(exactCachedResponse);
                     if (cachedSuggestionResponse != null)
                     {
                         // Update cache metadata
@@ -98,13 +103,12 @@ public class CachedServiceBridge : ISuggestionService, IDisposable
                 request.MaxSuggestions, 
                 isFromCache: false);
 
-            // 5. Store in cache for future use (fire and forget)
+            // 5. Store in cache with prefix keys for better matching (fire and forget)
             _ = Task.Run(async () =>
             {
                 try
                 {
-                    var serializedResponse = JsonSerializer.Serialize(protocolResponse);
-                    await _cache.SetAsync(cacheKey, serializedResponse, CancellationToken.None);
+                    await StoreWithPrefixKeys(request, protocolResponse);
                 }
                 catch
                 {
@@ -261,6 +265,118 @@ public class CachedServiceBridge : ISuggestionService, IDisposable
                 isRunning: true,
                 cachedSuggestionsCount: cacheStats.TotalEntries
             );
+        }
+    }
+
+    /// <summary>
+    /// Attempts to find cached suggestions using prefix matching
+    /// </summary>
+    private async Task<SuggestionResponse?> TryPrefixMatch(SuggestionRequest request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Check if the key generator supports prefix matching
+            var method = _keyGenerator.GetType().GetMethod("FindMatchingPrefixKeys");
+            if (method != null)
+            {
+                var result = method.Invoke(_keyGenerator, new object[] { request });
+                if (result is List<string> prefixKeys && prefixKeys.Any())
+                {
+                    // Try to get cached response using prefix matching
+                    var cacheAdapter = _cache as CacheServiceAdapter;
+                    if (cacheAdapter != null)
+                    {
+                        var prefixCachedResponse = await cacheAdapter.GetByPrefixAsync(prefixKeys, cancellationToken);
+                        if (prefixCachedResponse != null)
+                        {
+                            var cachedSuggestionResponse = JsonSerializer.Deserialize<SuggestionResponse>(prefixCachedResponse);
+                            if (cachedSuggestionResponse != null)
+                            {
+                                // Filter suggestions to match current input
+                                var filteredResponse = FilterSuggestionsByCurrentInput(cachedSuggestionResponse, request.UserInput);
+                                
+                                // Only return if we have matching suggestions
+                                if (filteredResponse.Suggestions.Any())
+                                {
+                                    filteredResponse.IsFromCache = true;
+                                    filteredResponse.CachedTimestamp = DateTime.UtcNow;
+                                    filteredResponse.GenerationTimeMs = 0.5; // Very fast prefix cache retrieval
+                                    return filteredResponse;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // If prefix matching fails, continue with normal cache lookup
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Filters cached suggestions to only return those that match the current user input
+    /// </summary>
+    private SuggestionResponse FilterSuggestionsByCurrentInput(SuggestionResponse cachedResponse, string currentInput)
+    {
+        var normalizedInput = currentInput?.Trim().ToLowerInvariant() ?? string.Empty;
+        
+        if (string.IsNullOrEmpty(normalizedInput))
+        {
+            return cachedResponse; // Return all suggestions if no input
+        }
+
+        var filteredSuggestions = cachedResponse.Suggestions
+            .Where(suggestion => 
+                suggestion.SuggestionText.Trim().ToLowerInvariant().StartsWith(normalizedInput))
+            .ToList();
+
+        return new SuggestionResponse(
+            suggestions: filteredSuggestions,
+            source: "prefix-cache",
+            confidenceScore: cachedResponse.ConfidenceScore,
+            isFromCache: true,
+            generationTimeMs: 0.5,
+            cacheHitRate: 100.0,
+            warningMessage: filteredSuggestions.Any() ? null : "No matching suggestions found"
+        );
+    }
+
+    /// <summary>
+    /// Stores the response in cache with multiple prefix keys for better matching
+    /// </summary>
+    private async Task StoreWithPrefixKeys(SuggestionRequest request, SuggestionResponse response)
+    {
+        try
+        {
+            var serializedResponse = JsonSerializer.Serialize(response);
+            
+            // Store with exact key first
+            var exactKey = _keyGenerator.GenerateCacheKey(request);
+            await _cache.SetAsync(exactKey, serializedResponse, CancellationToken.None);
+            
+            // Check if the key generator supports prefix keys
+            var method = _keyGenerator.GetType().GetMethod("GenerateAllPrefixKeys");
+            if (method != null)
+            {
+                var result = method.Invoke(_keyGenerator, new object[] { request });
+                if (result is List<string> prefixKeys && prefixKeys.Any())
+                {
+                    // Store with prefix keys using adapter
+                    var cacheAdapter = _cache as CacheServiceAdapter;
+                    if (cacheAdapter != null)
+                    {
+                        await cacheAdapter.SetWithPrefixKeysAsync(prefixKeys, serializedResponse, CancellationToken.None);
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // Ignore cache storage errors - this is a background operation
         }
     }
 

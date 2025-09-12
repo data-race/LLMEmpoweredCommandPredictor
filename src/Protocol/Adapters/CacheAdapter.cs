@@ -56,6 +56,57 @@ public class CacheServiceAdapter : ICacheService
         }
     }
 
+    /// <summary>
+    /// Attempts to get cached response using prefix matching
+    /// </summary>
+    public async Task<string?> GetByPrefixAsync(List<string> prefixKeys, CancellationToken cancellationToken = default)
+    {
+        if (_disposed) return null;
+
+        try
+        {
+            // Use reflection to call GetByPrefixAsync on the concrete cache service
+            var method = _cacheService.GetType().GetMethod("GetByPrefixAsync");
+            if (method != null)
+            {
+                var result = method.Invoke(_cacheService, new object[] { prefixKeys, cancellationToken });
+                if (result is Task<string?> task)
+                {
+                    return await task;
+                }
+            }
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Stores response with multiple prefix keys
+    /// </summary>
+    public async Task SetWithPrefixKeysAsync(List<string> keys, string response, CancellationToken cancellationToken = default)
+    {
+        if (_disposed) return;
+
+        try
+        {
+            // Use reflection to call SetWithPrefixKeysAsync on the concrete cache service
+            var method = _cacheService.GetType().GetMethod("SetWithPrefixKeysAsync");
+            if (method != null)
+            {
+                var task = method.Invoke(_cacheService, new object[] { keys, response, cancellationToken }) as Task;
+                if (task != null)
+                    await task;
+            }
+        }
+        catch
+        {
+            // Ignore cache errors
+        }
+    }
+
     /// <inheritdoc />
     public async Task SetAsync(string cacheKey, string response, CancellationToken cancellationToken = default)
     {

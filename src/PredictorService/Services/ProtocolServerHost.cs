@@ -8,19 +8,19 @@ namespace LLMEmpoweredCommandPredictor.PredictorService.Services;
 public class ProtocolServerHost : BackgroundService
 {
     private readonly ILogger<ProtocolServerHost> _logger;
-    private readonly ServiceBridge _serviceBridge;
+    private readonly CachedServiceBridge _cachedServiceBridge;
 
-    public ProtocolServerHost(ILogger<ProtocolServerHost> logger, ServiceBridge serviceBridge)
+    public ProtocolServerHost(ILogger<ProtocolServerHost> logger, CachedServiceBridge cachedServiceBridge)
     {
         _logger = logger;
-        _serviceBridge = serviceBridge;
+        _cachedServiceBridge = cachedServiceBridge;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Starting Protocol server");
+        _logger.LogInformation("Starting Protocol server with enhanced prefix caching...");
         
-        var server = ProtocolFactory.CreateServer(_serviceBridge);
+        var server = ProtocolFactory.CreateServer(_cachedServiceBridge);
         
         try
         {
