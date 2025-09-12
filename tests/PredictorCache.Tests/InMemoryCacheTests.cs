@@ -1,358 +1,304 @@
 using System;
-using System.Collections.Generic;
-using System.Threading;
 using System.Threading.Tasks;
-using LLMEmpoweredCommandPredictor.PredictorCache;
 using Xunit;
+using LLMEmpoweredCommandPredictor.PredictorCache;
 
 namespace LLMEmpoweredCommandPredictor.PredictorCache.Tests;
 
+/// <summary>
+/// Tests for the InMemoryCache implementation
+/// </summary>
 public class InMemoryCacheTests : IDisposable
 {
-    private readonly InMemoryCache cache;
-    private readonly CacheConfiguration testConfig;
+    private readonly InMemoryCache _cache;
 
     public InMemoryCacheTests()
     {
-        testConfig = new CacheConfiguration
-        {
-            MaxCapacity = 5,
-            DefaultTtl = TimeSpan.FromSeconds(30),
-            CleanupInterval = TimeSpan.FromMilliseconds(100),
-            EnableBackgroundCleanup = true
-        };
-        cache = new InMemoryCache(testConfig);
+        _cache = new InMemoryCache();
     }
 
     [Fact]
-    public async Task GetAsync_WithNullKey_ReturnsNull()
+    public async Task GetAsync_EmptyCache_ReturnsNull()
     {
         // Act
-        var result = await cache.GetAsync(null);
+        var result = await _cache.GetAsync("git");
 
         // Assert
         Assert.Null(result);
     }
 
     [Fact]
-    public async Task GetAsync_WithEmptyKey_ReturnsNull()
-    {
-        // Act
-        var result = await cache.GetAsync("");
-
-        // Assert
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public async Task GetAsync_WithNonExistentKey_ReturnsNull()
-    {
-        // Act
-        var result = await cache.GetAsync("nonexistent");
-
-        // Assert
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public async Task SetAsync_AndGetAsync_ReturnsStoredResponse()
+    public async Task SetAsync_SingleCommand_StoresForAllPrefixes()
     {
         // Arrange
-        var response = "test response with multiple suggestions";
-        var key = "test-key";
+        var command = "git branch";
 
         // Act
-        await cache.SetAsync(key, response);
-        var result = await cache.GetAsync(key);
+        await _cache.SetAsync(command, "unused");
 
-        // Assert
-        Assert.NotNull(result);
-        Assert.Equal(response, result);
+        // Assert - Check that prefixes are created
+        var gResult = await _cache.GetAsync("g");
+        var gitResult = await _cache.GetAsync("git");
+        var gitSpaceResult = await _cache.GetAsync("git ");
+
+        Assert.Equal("git branch", gResult);
+        Assert.Equal("git branch", gitResult);
+        Assert.Equal("git branch", gitSpaceResult);
     }
 
     [Fact]
-    public async Task SetAsync_WithNullResponse_DoesNotStore()
-    {
-        // Act
-        await cache.SetAsync("key", null);
-        var result = await cache.GetAsync("key");
-
-        // Assert
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public async Task SetAsync_WithEmptyResponse_DoesNotStore()
-    {
-        // Act
-        await cache.SetAsync("key", "");
-        var result = await cache.GetAsync("key");
-
-        // Assert
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public async Task GetAsync_WithExpiredEntry_ReturnsNull()
-    {
-        // Arrange - Create cache with very short TTL
-        var shortTtlConfig = new CacheConfiguration
-        {
-            DefaultTtl = TimeSpan.FromMilliseconds(50),
-            EnableBackgroundCleanup = true,
-            CleanupInterval = TimeSpan.FromMilliseconds(25)
-        };
-        using var shortTtlCache = new InMemoryCache(shortTtlConfig);
-        
-        var response = "test response";
-        var key = "expired-key";
-
-        // Act
-        await shortTtlCache.SetAsync(key, response);
-        await Task.Delay(100); // Wait for expiration
-        var result = await shortTtlCache.GetAsync(key);
-
-        // Assert
-        Assert.Null(result);
-    }
-
-    [Fact]
-    public async Task RemoveAsync_RemovesEntry()
+    public async Task GetAsync_MultipleCommands_ReturnsAllMatching()
     {
         // Arrange
-        var response = "test response";
-        var key = "remove-key";
-
-        await cache.SetAsync(key, response);
-        
-        // Verify it exists
-        var beforeRemove = await cache.GetAsync(key);
-        Assert.NotNull(beforeRemove);
+        await _cache.SetAsync("git branch", "unused");
+        await _cache.SetAsync("git pull", "unused");
+        await _cache.SetAsync("git status", "unused");
 
         // Act
-        await cache.RemoveAsync(key);
-        var afterRemove = await cache.GetAsync(key);
+        var result = await _cache.GetAsync("git");
 
         // Assert
-        Assert.Null(afterRemove);
+        var commands = result?.Split('\n');
+        Assert.NotNull(commands);
+        Assert.Equal(3, commands.Length);
+        Assert.Contains("git branch", commands);
+        Assert.Contains("git pull", commands);
+        Assert.Contains("git status", commands);
+    }
+
+    [Fact]
+    public async Task GetAsync_PrefixMatch_ReturnsCorrectCommands()
+    {
+        // Arrange
+        await _cache.SetAsync("git branch", "unused");
+        await _cache.SetAsync("git pull", "unused");
+        await _cache.SetAsync("ls", "unused");
+
+        // Act
+        var gitResult = await _cache.GetAsync("git p");
+        var lsResult = await _cache.GetAsync("l");
+
+        // Assert
+        Assert.Equal("git pull", gitResult);
+        Assert.Equal("ls", lsResult);
+    }
+
+    [Fact]
+    public async Task SetAsync_DuplicateCommand_IncreasesExecutionCount()
+    {
+        // Arrange
+        var command = "git status";
+
+        // Act
+        await _cache.SetAsync(command, "unused");
+        await _cache.SetAsync(command, "unused");
+        await _cache.SetAsync(command, "unused");
+
+        // Get internal data for verification
+        var cachedCommands = _cache.GetAllCachedCommands();
+
+        // Assert
+        Assert.True(cachedCommands.ContainsKey("git"));
+        var gitCommands = cachedCommands["git"];
+        Assert.Contains("git status", gitCommands);
+        
+        // The command should appear only once (not duplicated)
+        Assert.Single(gitCommands);
+    }
+
+    [Fact]
+    public async Task GetAsync_OrdersByFrequencyAndRecency()
+    {
+        // Arrange
+        await _cache.SetAsync("git branch", "unused");
+        await _cache.SetAsync("git pull", "unused");
+        await _cache.SetAsync("git status", "unused");
+        
+        // Execute git pull multiple times to increase frequency
+        await _cache.SetAsync("git pull", "unused");
+        await _cache.SetAsync("git pull", "unused");
+
+        // Act
+        var result = await _cache.GetAsync("git");
+
+        // Assert
+        var commands = result?.Split('\n');
+        Assert.NotNull(commands);
+        
+        // git pull should be first due to higher frequency
+        Assert.Equal("git pull", commands[0]);
+    }
+
+    [Fact]
+    public async Task RemoveAsync_RemovesCommandFromAllPrefixes()
+    {
+        // Arrange
+        await _cache.SetAsync("git branch", "unused");
+        await _cache.SetAsync("git pull", "unused");
+
+        // Act
+        await _cache.RemoveAsync("git branch");
+
+        // Assert
+        var gitResult = await _cache.GetAsync("git");
+        var gitBResult = await _cache.GetAsync("git b");
+
+        Assert.Equal("git pull", gitResult);
+        Assert.Null(gitBResult);
     }
 
     [Fact]
     public async Task ClearAsync_RemovesAllEntries()
     {
         // Arrange
-        await cache.SetAsync("key1", "response1");
-        await cache.SetAsync("key2", "response2");
-
-        // Verify entries exist
-        Assert.NotNull(await cache.GetAsync("key1"));
-        Assert.NotNull(await cache.GetAsync("key2"));
+        await _cache.SetAsync("git branch", "unused");
+        await _cache.SetAsync("git pull", "unused");
+        await _cache.SetAsync("ls", "unused");
 
         // Act
-        await cache.ClearAsync();
+        await _cache.ClearAsync();
 
         // Assert
-        Assert.Null(await cache.GetAsync("key1"));
-        Assert.Null(await cache.GetAsync("key2"));
+        var gitResult = await _cache.GetAsync("git");
+        var lsResult = await _cache.GetAsync("l");
+
+        Assert.Null(gitResult);
+        Assert.Null(lsResult);
     }
 
     [Fact]
-    public async Task LRU_Eviction_RemovesOldestEntries()
-    {
-        // Arrange - Fill cache to capacity
-        for (int i = 0; i < testConfig.MaxCapacity; i++)
-        {
-            await cache.SetAsync($"key{i}", $"response{i}");
-        }
-
-        // Act - Add one more entry to trigger eviction
-        await cache.SetAsync("new-key", "new-response");
-
-        // Assert - First entry should be evicted
-        Assert.Null(await cache.GetAsync("key0"));
-        Assert.NotNull(await cache.GetAsync("new-key"));
-        
-        // Other entries should still exist
-        for (int i = 1; i < testConfig.MaxCapacity; i++)
-        {
-            Assert.NotNull(await cache.GetAsync($"key{i}"));
-        }
-    }
-
-    [Fact]
-    public async Task LRU_AccessOrder_UpdatesCorrectly()
+    public async Task GetStatistics_TracksUsageCorrectly()
     {
         // Arrange
-        await cache.SetAsync("key1", "response1");
-        await cache.SetAsync("key2", "response2");
-        await cache.SetAsync("key3", "response3");
+        await _cache.SetAsync("git branch", "unused");
 
-        // Act - Access key1 to make it most recently used
-        await cache.GetAsync("key1");
+        // Act
+        await _cache.GetAsync("git"); // Hit
+        await _cache.GetAsync("nonexistent"); // Miss
 
-        // Fill remaining capacity
-        await cache.SetAsync("key4", "response4");
-        await cache.SetAsync("key5", "response5");
-
-        // Add one more to trigger eviction
-        await cache.SetAsync("key6", "response6");
-
-        // Assert - key2 should be evicted (oldest unused), key1 should remain
-        Assert.Null(await cache.GetAsync("key2"));
-        Assert.NotNull(await cache.GetAsync("key1"));
-        Assert.NotNull(await cache.GetAsync("key6"));
-    }
-
-    [Fact]
-    public void GetStatistics_ReturnsAccurateData()
-    {
-        // Arrange
-        var initialStats = cache.GetStatistics();
-
-        // Act & Assert initial state
-        Assert.Equal(0, initialStats.TotalRequests);
-        Assert.Equal(0, initialStats.CacheHits);
-        Assert.Equal(0, initialStats.CacheMisses);
-        Assert.Equal(0, initialStats.TotalEntries);
-    }
-
-    [Fact]
-    public async Task GetStatistics_TracksHitsAndMisses()
-    {
-        // Arrange
-        var response = "test response";
-        await cache.SetAsync("hit-key", response);
-
-        // Act - Generate hits and misses
-        await cache.GetAsync("hit-key"); // Hit
-        await cache.GetAsync("hit-key"); // Hit
-        await cache.GetAsync("miss-key"); // Miss
-        await cache.GetAsync("miss-key"); // Miss
-
-        var stats = cache.GetStatistics();
+        var stats = _cache.GetStatistics();
 
         // Assert
-        Assert.Equal(4, stats.TotalRequests);
-        Assert.Equal(2, stats.CacheHits);
-        Assert.Equal(2, stats.CacheMisses);
+        Assert.Equal(2, stats.TotalRequests);
+        Assert.Equal(1, stats.CacheHits);
+        Assert.Equal(1, stats.CacheMisses);
         Assert.Equal(50.0, stats.HitRate);
-        Assert.Equal(1, stats.TotalEntries);
     }
 
-    [Fact]
-    public async Task GetStatistics_TracksMemoryUsage()
+    [Theory]
+    [InlineData("Git Branch")]
+    [InlineData("  git branch  ")]
+    [InlineData("GIT BRANCH")]
+    public async Task GetAsync_CaseInsensitive_FindsMatch(string input)
     {
         // Arrange
-        var largeResponse = new string('a', 1000) + "|" + new string('b', 1000);
+        await _cache.SetAsync("git branch", "unused");
 
         // Act
-        await cache.SetAsync("large-key", largeResponse);
-        var stats = cache.GetStatistics();
+        var result = await _cache.GetAsync(input);
 
         // Assert
-        Assert.True(stats.MemoryUsageBytes > 2000); // At least the text size
-        Assert.Equal(1, stats.TotalEntries);
+        Assert.Equal("git branch", result);
     }
 
     [Fact]
-    public async Task BackgroundCleanup_RemovesExpiredEntries()
-    {
-        // Arrange - Create cache with very short TTL for this test
-        var shortTtlConfig = new CacheConfiguration
-        {
-            DefaultTtl = TimeSpan.FromMilliseconds(50),
-            EnableBackgroundCleanup = true,
-            CleanupInterval = TimeSpan.FromMilliseconds(25)
-        };
-        using var shortTtlCache = new InMemoryCache(shortTtlConfig);
-        
-        var shortLivedResponse = "short response";
-        var longLivedResponse = "long response";
-
-        // Set short-lived entry first
-        await shortTtlCache.SetAsync("short-key", shortLivedResponse);
-        
-        // Wait a bit, then set long-lived entry with different cache instance that has longer TTL
-        await Task.Delay(25);
-        await cache.SetAsync("long-key", longLivedResponse);
-
-        // Act - Wait for cleanup to run on short TTL cache
-        await Task.Delay(100);
-
-        // Assert
-        Assert.Null(await shortTtlCache.GetAsync("short-key"));
-        Assert.NotNull(await cache.GetAsync("long-key"));
-    }
-
-    [Fact]
-    public async Task ConcurrentAccess_ThreadSafe()
-    {
-        // Arrange - Use cache with higher capacity for this test
-        using var largeCache = new InMemoryCache(new CacheConfiguration { MaxCapacity = 20 });
-        var tasks = new List<Task>();
-        var response = "concurrent response";
-
-        // Act - Multiple concurrent operations
-        for (int i = 0; i < 10; i++)
-        {
-            int index = i;
-            tasks.Add(Task.Run(async () =>
-            {
-                await largeCache.SetAsync($"concurrent-key-{index}", $"{response}-{index}");
-                await largeCache.GetAsync($"concurrent-key-{index}");
-            }));
-        }
-
-        await Task.WhenAll(tasks);
-
-        // Assert - All entries should be accessible
-        for (int i = 0; i < 10; i++)
-        {
-            var result = await largeCache.GetAsync($"concurrent-key-{i}");
-            Assert.NotNull(result);
-            Assert.Equal($"{response}-{i}", result);
-        }
-    }
-
-    [Fact]
-    public void Constructor_WithNullConfig_ThrowsArgumentNullException()
+    public async Task SetAsync_EmptyOrNullInput_HandlesGracefully()
     {
         // Act & Assert
-        Assert.Throws<ArgumentNullException>(() => new InMemoryCache(null));
+        await _cache.SetAsync("", "unused");
+        await _cache.SetAsync(null!, "unused");
+
+        var stats = _cache.GetStatistics();
+        Assert.Equal(0, stats.TotalEntries);
     }
 
     [Fact]
-    public async Task UpdateEntry_OverwritesExisting()
+    public async Task GetAsync_EmptyOrNullInput_ReturnsNull()
+    {
+        // Act & Assert
+        var result1 = await _cache.GetAsync("");
+        var result2 = await _cache.GetAsync(null!);
+
+        Assert.Null(result1);
+        Assert.Null(result2);
+    }
+
+    [Fact]
+    public async Task SetAsync_LongCommand_RespectsPrefixLimit()
     {
         // Arrange
-        var key = "update-key";
-        var originalResponse = "original response";
-        var updatedResponse = "updated response";
+        var longCommand = new string('a', 100); // 100 character command
+        var cache = new InMemoryCache(maxPrefixLength: 20);
 
         // Act
-        await cache.SetAsync(key, originalResponse);
-        await cache.SetAsync(key, updatedResponse);
-
-        var result = await cache.GetAsync(key);
+        await cache.SetAsync(longCommand, "unused");
 
         // Assert
-        Assert.NotNull(result);
-        Assert.Equal(updatedResponse, result);
+        var cachedCommands = cache.GetAllCachedCommands();
+        
+        // Should not have prefixes longer than 20 characters
+        var longestPrefix = cachedCommands.Keys.Max(k => k.Length);
+        Assert.True(longestPrefix <= 20);
+
+        cache.Dispose();
     }
 
     [Fact]
-    public async Task GetStatistics_TracksUptime()
+    public async Task SetAsync_ManyCommands_RespectsCommandLimit()
     {
-        // Act
-        await Task.Delay(50);
-        var stats = cache.GetStatistics();
+        // Arrange
+        var cache = new InMemoryCache(maxCommandsPerPrefix: 3);
+
+        // Act - Add 5 commands with same prefix
+        await cache.SetAsync("git branch", "unused");
+        await cache.SetAsync("git pull", "unused");
+        await cache.SetAsync("git status", "unused");
+        await cache.SetAsync("git add", "unused");
+        await cache.SetAsync("git commit", "unused");
 
         // Assert
-        Assert.True(stats.Uptime.TotalMilliseconds >= 50);
+        var result = await cache.GetAsync("git");
+        var commands = result?.Split('\n');
+        
+        Assert.NotNull(commands);
+        Assert.True(commands.Length <= 3); // Should respect limit
+
+        cache.Dispose();
+    }
+
+    [Fact]
+    public async Task RealWorldScenario_GitWorkflow_WorksCorrectly()
+    {
+        // Arrange - Simulate a typical git workflow
+        await _cache.SetAsync("git status", "unused");
+        await _cache.SetAsync("git add .", "unused");
+        await _cache.SetAsync("git commit -m 'fix'", "unused");
+        await _cache.SetAsync("git push", "unused");
+        await _cache.SetAsync("git pull", "unused");
+        await _cache.SetAsync("git branch", "unused");
+
+        // Act & Assert
+        var gResult = await _cache.GetAsync("g");
+        Assert.Contains("git", gResult);
+
+        var gitResult = await _cache.GetAsync("git");
+        var gitCommands = gitResult?.Split('\n');
+        Assert.NotNull(gitCommands);
+        Assert.Equal(6, gitCommands.Length);
+
+        var gitPResult = await _cache.GetAsync("git p");
+        var gitPCommands = gitPResult?.Split('\n');
+        Assert.NotNull(gitPCommands);
+        Assert.Contains("git push", gitPCommands);
+        Assert.Contains("git pull", gitPCommands);
+        Assert.Equal(2, gitPCommands.Length);
+
+        var gitAddResult = await _cache.GetAsync("git a");
+        Assert.Equal("git add .", gitAddResult);
     }
 
     public void Dispose()
     {
-        cache?.Dispose();
+        _cache?.Dispose();
     }
 }

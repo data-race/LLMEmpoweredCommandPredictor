@@ -2,319 +2,242 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Management.Automation.Subsystem.Prediction;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace LLMEmpoweredCommandPredictor.PredictorCache;
 
 /// <summary>
-/// Configuration options for the in-memory cache.
+/// History command stored in the prefix cache
 /// </summary>
-public class CacheConfiguration
+public class HistoryCommand
 {
-    /// <summary>
-    /// Maximum number of cache entries before LRU eviction starts.
-    /// </summary>
-    public int MaxCapacity { get; init; } = 1000;
-
-    /// <summary>
-    /// Default time-to-live for cache entries.
-    /// </summary>
-    public TimeSpan DefaultTtl { get; init; } = TimeSpan.FromMinutes(30);
-
-    /// <summary>
-    /// Interval for automatic cleanup of expired entries.
-    /// </summary>
-    public TimeSpan CleanupInterval { get; init; } = TimeSpan.FromMinutes(5);
-
-    /// <summary>
-    /// Whether to enable background cleanup timer.
-    /// </summary>
-    public bool EnableBackgroundCleanup { get; init; } = true;
+    public string FullCommand { get; set; } = string.Empty;
+    public DateTime LastExecuted { get; set; }
+    public int ExecutionCount { get; set; }
 }
 
 /// <summary>
-/// Internal cache entry containing cached data and metadata.
+/// Cache entry for a specific prefix containing historical commands
 /// </summary>
-internal class CacheEntry
+public class HistoryCacheEntry
 {
-    public string Response { get; init; }
-    public DateTime ExpirationTime { get; init; }
-    public DateTime LastAccessTime { get; set; }
-    public DateTime CreatedTime { get; init; }
-    
-    public CacheEntry(string response)
-    {
-        Response = response ?? throw new ArgumentNullException(nameof(response));
-    }
-    
-    public bool IsExpired => DateTime.UtcNow > ExpirationTime;
-    
-    public long EstimatedSizeBytes
-    {
-        get
-        {
-            // Rough estimation: response text size + object overhead
-            // Multiplies by 2 because .NET strings use UTF-16 encoding (2 bytes per character)
-            var textSize = Response.Length * 2; // UTF-16
-            return textSize + 200; // Entry overhead
-        }
-    }
+    public List<HistoryCommand> Commands { get; set; } = new();
+    public DateTime LastUpdated { get; set; }
 }
 
 /// <summary>
-/// High-performance in-memory cache implementation with LRU eviction and TTL expiration.
-/// Thread-safe and optimized for PowerShell command prediction scenarios.
+/// Simple history-based prefix cache for command prediction.
+/// Stores previously executed commands indexed by their prefixes for intelligent completion.
 /// </summary>
 public class InMemoryCache : ICacheService, IDisposable
 {
-    private readonly CacheConfiguration config;
-    private readonly ConcurrentDictionary<string, CacheEntry> cache;
-    private readonly LinkedList<string> accessOrder;
-    private readonly ReaderWriterLockSlim accessOrderLock;
-    private readonly Timer? cleanupTimer;
+    private readonly ConcurrentDictionary<string, HistoryCacheEntry> _prefixCache;
+    private readonly int _maxCommandsPerPrefix;
+    private readonly int _maxPrefixLength;
     
     // Statistics tracking
-    private long totalRequests;
-    private long cacheHits;
-    private long cacheMisses;
-    private readonly DateTime startTime;
-    private DateTime lastAccessTime;
-    
-    private bool disposed;
+    private long _totalRequests;
+    private long _cacheHits;
+    private long _cacheMisses;
+    private readonly DateTime _startTime;
+    private DateTime _lastAccessTime;
+    private bool _disposed;
 
     /// <summary>
-    /// Initializes a new instance of the InMemoryCache with default configuration.
+    /// Initializes a new instance of the InMemoryCache with default settings.
     /// </summary>
-    public InMemoryCache() : this(new CacheConfiguration())
+    public InMemoryCache() : this(maxCommandsPerPrefix: 10, maxPrefixLength: 50)
     {
     }
 
     /// <summary>
-    /// Initializes a new instance of the InMemoryCache with custom configuration.
+    /// Initializes a new instance of the InMemoryCache with custom settings.
     /// </summary>
-    /// <param name="config">Cache configuration options</param>
-    public InMemoryCache(CacheConfiguration config)
+    /// <param name="maxCommandsPerPrefix">Maximum number of commands to store per prefix</param>
+    /// <param name="maxPrefixLength">Maximum prefix length to index</param>
+    public InMemoryCache(int maxCommandsPerPrefix = 10, int maxPrefixLength = 50)
     {
-        this.config = config ?? throw new ArgumentNullException(nameof(config));
-        cache = new ConcurrentDictionary<string, CacheEntry>();
-        accessOrder = new LinkedList<string>();
-        accessOrderLock = new ReaderWriterLockSlim();
-        startTime = DateTime.UtcNow;
-        lastAccessTime = startTime;
-
-        // Start background cleanup timer if enabled
-        if (this.config.EnableBackgroundCleanup)
-        {
-            cleanupTimer = new Timer(
-                callback: _ => CleanupExpiredEntries(),
-                state: null,
-                dueTime: this.config.CleanupInterval,
-                period: this.config.CleanupInterval);
-        }
+        _prefixCache = new ConcurrentDictionary<string, HistoryCacheEntry>();
+        _maxCommandsPerPrefix = maxCommandsPerPrefix;
+        _maxPrefixLength = maxPrefixLength;
+        _startTime = DateTime.UtcNow;
+        _lastAccessTime = _startTime;
     }
 
     /// <inheritdoc />
-    public async Task<string?> GetAsync(string cacheKey, CancellationToken cancellationToken = default)
+    public Task<string?> GetAsync(string cacheKey, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(cacheKey))
-            return null;
+            return Task.FromResult<string?>(null);
 
-        Interlocked.Increment(ref totalRequests);
-        lastAccessTime = DateTime.UtcNow;
+        Interlocked.Increment(ref _totalRequests);
+        _lastAccessTime = DateTime.UtcNow;
 
-        if (cache.TryGetValue(cacheKey, out var entry))
+        var userPrefix = NormalizePrefix(cacheKey);
+
+        if (_prefixCache.TryGetValue(userPrefix, out var entry))
         {
-            // Check if entry is expired
-            if (entry.IsExpired)
+            var suggestions = entry.Commands
+                .OrderByDescending(c => c.ExecutionCount)
+                .ThenByDescending(c => c.LastExecuted)
+                .Select(c => c.FullCommand)
+                .ToList();
+
+            if (suggestions.Any())
             {
-                // Remove expired entry
-                await RemoveAsync(cacheKey, cancellationToken);
-                Interlocked.Increment(ref cacheMisses);
-                return null;
+                Interlocked.Increment(ref _cacheHits);
+                return Task.FromResult<string?>(string.Join("\n", suggestions));
+            }
+        }
+
+        Interlocked.Increment(ref _cacheMisses);
+        return Task.FromResult<string?>(null);
+    }
+
+    /// <inheritdoc />
+    public Task SetAsync(string cacheKey, string response, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrEmpty(cacheKey))
+            return Task.CompletedTask;
+
+        var executedCommand = NormalizePrefix(cacheKey);
+        
+        // Store this command for all its prefixes AND as an exact match
+        for (int i = 1; i <= executedCommand.Length && i <= _maxPrefixLength; i++)
+        {
+            var prefix = executedCommand.Substring(0, i);
+
+            // Get or create entry for this prefix
+            var entry = _prefixCache.GetOrAdd(prefix, _ => new HistoryCacheEntry
+            {
+                LastUpdated = DateTime.UtcNow
+            });
+
+            // Find existing command or create new one
+            var existingCommand = entry.Commands.FirstOrDefault(c => c.FullCommand == executedCommand);
+            if (existingCommand != null)
+            {
+                existingCommand.LastExecuted = DateTime.UtcNow;
+                existingCommand.ExecutionCount++;
+            }
+            else
+            {
+                entry.Commands.Add(new HistoryCommand
+                {
+                    FullCommand = executedCommand,
+                    LastExecuted = DateTime.UtcNow,
+                    ExecutionCount = 1
+                });
             }
 
-            // Update access time and LRU order
-            entry.LastAccessTime = DateTime.UtcNow;
-            UpdateAccessOrder(cacheKey);
-            
-            Interlocked.Increment(ref cacheHits);
-            return entry.Response;
+            // Keep most recent/frequent commands
+            entry.Commands = entry.Commands
+                .OrderByDescending(c => c.ExecutionCount)
+                .ThenByDescending(c => c.LastExecuted)
+                .Take(_maxCommandsPerPrefix)
+                .ToList();
+
+            entry.LastUpdated = DateTime.UtcNow;
         }
 
-        Interlocked.Increment(ref cacheMisses);
-        return null;
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc />
-    public async Task SetAsync(string cacheKey, string response, CancellationToken cancellationToken = default)
-    {
-        if (string.IsNullOrEmpty(cacheKey) || string.IsNullOrEmpty(response))
-            return;
-
-        var now = DateTime.UtcNow;
-        var entry = new CacheEntry(response)
-        {
-            ExpirationTime = now.Add(config.DefaultTtl),
-            LastAccessTime = now,
-            CreatedTime = now
-        };
-
-        // Add or update the entry
-        cache.AddOrUpdate(cacheKey, entry, (key, oldEntry) => entry);
-
-        // Update LRU order
-        UpdateAccessOrder(cacheKey);
-
-        // Enforce capacity limits
-        await EnforceCapacityLimits();
-    }
-
-    /// <inheritdoc />
-    public async Task RemoveAsync(string cacheKey, CancellationToken cancellationToken = default)
+    public Task RemoveAsync(string cacheKey, CancellationToken cancellationToken = default)
     {
         if (string.IsNullOrEmpty(cacheKey))
-            return;
+            return Task.CompletedTask;
 
-        cache.TryRemove(cacheKey, out _);
-        
-        // Remove from access order
-        accessOrderLock.EnterWriteLock();
-        try
+        var normalizedKey = NormalizePrefix(cacheKey);
+
+        // Remove from all prefix entries
+        var keysToUpdate = _prefixCache.Keys
+            .Where(prefix => normalizedKey.StartsWith(prefix))
+            .ToList();
+
+        foreach (var prefixKey in keysToUpdate)
         {
-            accessOrder.Remove(cacheKey);
-        }
-        finally
-        {
-            accessOrderLock.ExitWriteLock();
+            if (_prefixCache.TryGetValue(prefixKey, out var entry))
+            {
+                entry.Commands.RemoveAll(c => c.FullCommand == normalizedKey);
+                
+                // Remove empty entries
+                if (!entry.Commands.Any())
+                {
+                    _prefixCache.TryRemove(prefixKey, out _);
+                }
+                else
+                {
+                    entry.LastUpdated = DateTime.UtcNow;
+                }
+            }
         }
 
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc />
-    public async Task ClearAsync(CancellationToken cancellationToken = default)
+    public Task ClearAsync(CancellationToken cancellationToken = default)
     {
-        cache.Clear();
-        
-        accessOrderLock.EnterWriteLock();
-        try
-        {
-            accessOrder.Clear();
-        }
-        finally
-        {
-            accessOrderLock.ExitWriteLock();
-        }
+        _prefixCache.Clear();
 
-        // Reset statistics (except start time)
-        Interlocked.Exchange(ref totalRequests, 0);
-        Interlocked.Exchange(ref cacheHits, 0);
-        Interlocked.Exchange(ref cacheMisses, 0);
+        // Reset statistics
+        Interlocked.Exchange(ref _totalRequests, 0);
+        Interlocked.Exchange(ref _cacheHits, 0);
+        Interlocked.Exchange(ref _cacheMisses, 0);
 
-        await Task.CompletedTask;
+        return Task.CompletedTask;
     }
 
     /// <inheritdoc />
     public CacheStatistics GetStatistics()
     {
-        var totalRequestsSnapshot = Interlocked.Read(ref totalRequests);
-        var cacheHitsSnapshot = Interlocked.Read(ref cacheHits);
-        var cacheMissesSnapshot = Interlocked.Read(ref cacheMisses);
-        
-        var memoryUsage = cache.Values.Sum(entry => entry.EstimatedSizeBytes);
-        
+        var totalRequestsSnapshot = Interlocked.Read(ref _totalRequests);
+        var cacheHitsSnapshot = Interlocked.Read(ref _cacheHits);
+        var cacheMissesSnapshot = Interlocked.Read(ref _cacheMisses);
+
+        var memoryUsage = _prefixCache.Values.Sum(entry => EstimateEntrySize(entry));
+
         return new CacheStatistics
         {
             TotalRequests = (int)totalRequestsSnapshot,
             CacheHits = (int)cacheHitsSnapshot,
             CacheMisses = (int)cacheMissesSnapshot,
-            TotalEntries = cache.Count,
+            TotalEntries = _prefixCache.Count,
             MemoryUsageBytes = memoryUsage,
-            LastAccess = lastAccessTime,
-            Uptime = DateTime.UtcNow - startTime
+            LastAccess = _lastAccessTime,
+            Uptime = DateTime.UtcNow - _startTime
         };
     }
 
     /// <summary>
-    /// Updates the access order for LRU tracking.
+    /// Gets all cached commands for debugging purposes
     /// </summary>
-    /// <param name="cacheKey">The cache key that was accessed</param>
-    private void UpdateAccessOrder(string cacheKey)
+    public Dictionary<string, List<string>> GetAllCachedCommands()
     {
-        accessOrderLock.EnterWriteLock();
-        try
-        {
-            // Remove existing entry if present
-            accessOrder.Remove(cacheKey);
-            
-            // Add to the end (most recently used)
-            accessOrder.AddLast(cacheKey);
-        }
-        finally
-        {
-            accessOrderLock.ExitWriteLock();
-        }
+        return _prefixCache.ToDictionary(
+            kvp => kvp.Key,
+            kvp => kvp.Value.Commands.Select(c => c.FullCommand).ToList()
+        );
     }
 
     /// <summary>
-    /// Enforces capacity limits by evicting least recently used entries.
+    /// Normalizes a prefix by trimming and converting to lowercase
     /// </summary>
-    private async Task EnforceCapacityLimits()
+    private string NormalizePrefix(string prefix)
     {
-        if (cache.Count <= config.MaxCapacity)
-            return;
-
-        var entriesToRemove = cache.Count - config.MaxCapacity;
-        var keysToRemove = new List<string>(entriesToRemove);
-
-        accessOrderLock.EnterReadLock();
-        try
-        {
-            var current = accessOrder.First;
-            while (current != null && keysToRemove.Count < entriesToRemove)
-            {
-                keysToRemove.Add(current.Value);
-                current = current.Next;
-            }
-        }
-        finally
-        {
-            accessOrderLock.ExitReadLock();
-        }
-
-        // Remove the LRU entries
-        foreach (var key in keysToRemove)
-        {
-            await RemoveAsync(key);
-        }
+        return prefix?.Trim().ToLowerInvariant() ?? string.Empty;
     }
 
     /// <summary>
-    /// Cleans up expired cache entries.
+    /// Estimates the memory size of a cache entry
     /// </summary>
-    private void CleanupExpiredEntries()
+    private long EstimateEntrySize(HistoryCacheEntry entry)
     {
-        if (disposed)
-            return;
-
-        var expiredKeys = new List<string>();
-
-        // Find expired entries
-        foreach (var kvp in cache)
-        {
-            if (kvp.Value.IsExpired)
-            {
-                expiredKeys.Add(kvp.Key);
-            }
-        }
-
-        // Remove expired entries
-        foreach (var key in expiredKeys)
-        {
-            _ = RemoveAsync(key); // Fire and forget
-        }
+        var commandsSize = entry.Commands.Sum(c => c.FullCommand.Length * 2); // UTF-16
+        return commandsSize + 100; // Entry overhead
     }
 
     /// <summary>
@@ -322,15 +245,11 @@ public class InMemoryCache : ICacheService, IDisposable
     /// </summary>
     public void Dispose()
     {
-        if (disposed)
+        if (_disposed)
             return;
 
-        disposed = true;
-        
-        cleanupTimer?.Dispose();
-        accessOrderLock.Dispose();
-        cache.Clear();
-        
+        _disposed = true;
+        _prefixCache.Clear();
         GC.SuppressFinalize(this);
     }
 }
