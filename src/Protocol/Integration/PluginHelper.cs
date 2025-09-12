@@ -92,15 +92,15 @@ public class PluginHelper : IDisposable
     {
         try
         {
-            // Use a reasonable timeout for IPC calls
+            // Use strict timeout to respect PowerShell 20ms constraint
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(_connectionSettings.TimeoutMs, 200)));
+            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(_connectionSettings.TimeoutMs));
 
             var task = GetSuggestionsAsync(pluginContext, maxSuggestions, timeoutCts.Token);
             
             #pragma warning disable VSTHRD002 // Synchronously waiting on tasks or awaiters may cause deadlocks
-            // Wait with timeout
-            if (task.Wait(Math.Max(_connectionSettings.TimeoutMs, 200), cancellationToken))
+            // Wait with timeout (respect PowerShell 20ms limit)
+            if (task.Wait(_connectionSettings.TimeoutMs, cancellationToken))
             {
                 return task.Result;
             }

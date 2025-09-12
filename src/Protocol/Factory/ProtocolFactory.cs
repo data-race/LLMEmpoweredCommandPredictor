@@ -18,7 +18,7 @@ public static class ProtocolFactory
     /// </summary>
     public static ConnectionSettings DefaultSettings => new()
     {
-        TimeoutMs = 15,
+        TimeoutMs = 18,
         ConnectionTimeoutMs = 1000,
         MaxRetries = 3,
         RetryDelayMs = 100,
