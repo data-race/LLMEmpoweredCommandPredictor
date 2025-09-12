@@ -92,15 +92,15 @@ public class PluginHelper : IDisposable
     {
         try
         {
-            // Use strict timeout to respect PowerShell 20ms constraint
+            // Extended timeout for LLM integration testing (minimum 200ms)
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(_connectionSettings.TimeoutMs));
+            timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(_connectionSettings.TimeoutMs, 200)));
 
             var task = GetSuggestionsAsync(pluginContext, maxSuggestions, timeoutCts.Token);
             
             #pragma warning disable VSTHRD002 // Synchronously waiting on tasks or awaiters may cause deadlocks
-            // Wait with timeout (respect PowerShell 20ms limit)
-            if (task.Wait(_connectionSettings.TimeoutMs, cancellationToken))
+            // Wait with extended timeout (minimum 200ms for LLM)
+            if (task.Wait(Math.Max(_connectionSettings.TimeoutMs, 200), cancellationToken))
             {
                 return task.Result;
             }
