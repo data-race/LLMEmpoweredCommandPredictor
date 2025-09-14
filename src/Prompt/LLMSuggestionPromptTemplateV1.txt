@@ -6,7 +6,8 @@ Output: a JSON array of 5 command suggestions, each with a command, description,
 # Input Definition
 Context Object Properties:
 **These are core context properties:**
-- previousCommands: List of last 3-5 commands entered by the user.
+- globalCommandsHistory: List of 50 - 150 global commands history.
+- previousCommands: List of last 5-15 commands entered by the user in current session.
 - currentDirectory: Full path of the current working directory.
 - directoryContents: List of files and folders in the current directory.
 - installedModules: List of available PowerShell modules or CLI tools.
