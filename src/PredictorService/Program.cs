@@ -7,6 +7,7 @@ using LLMEmpoweredCommandPredictor.PredictorService.Configuration;
 using LLMEmpoweredCommandPredictor.Protocol.Integration;
 using LLMEmpoweredCommandPredictor.Protocol.Factory;
 using LLMEmpoweredCommandPredictor.Protocol.Adapters;
+using LLMEmpoweredCommandPredictor.Protocol.Contracts;
 using LLMEmpoweredCommandPredictor.PredictorCache;
 
 namespace LLMEmpoweredCommandPredictor.PredictorService;
@@ -106,28 +107,32 @@ public class Program
                     Console.WriteLine($"Prompt template not found at: {promptConfig.TemplatePath}");
                 }
                 
-                // Register Cache services
-                services.AddSingleton<InMemoryCache>();
-                services.AddSingleton<CacheKeyGenerator>();
-                
-                // Register Protocol server backend
-                services.AddSingleton<IServiceBackend, PredictorServiceBackend>();
-                
-                // Register cache adapter services
-                services.AddSingleton(provider =>
+                // Register Cache services with cache-specific file logging
+                services.AddSingleton<InMemoryCache>(provider =>
                 {
-                    var cache = provider.GetRequiredService<InMemoryCache>();
-                    var keyGenerator = provider.GetRequiredService<CacheKeyGenerator>();
-                    return new CacheServiceAdapter(cache, keyGenerator);
+                    // Use cache-specific file logger
+                    var logger = ConsoleLoggerFactory.CreateCacheLogger<InMemoryCache>();
+                    return new InMemoryCache(new CacheConfiguration(), logger);
+                });
+                services.AddSingleton<CacheKeyGenerator>(provider =>
+                {
+                    // Use cache-specific file logger
+                    var logger = ConsoleLoggerFactory.CreateCacheLogger<CacheKeyGenerator>();
+                    return new CacheKeyGenerator(logger);
                 });
                 
-                services.AddSingleton(provider =>
+                // Register PredictorServiceBackend directly as ISuggestionService
+                services.AddSingleton<ISuggestionService>(provider =>
                 {
+                    // Use shared file logger for backend too
+                    var logger = ConsoleLoggerFactory.CreateInfoLogger<PredictorServiceBackend>();
+                    var contextManager = provider.GetRequiredService<ContextManager>();
+                    var cache = provider.GetRequiredService<InMemoryCache>();
                     var keyGenerator = provider.GetRequiredService<CacheKeyGenerator>();
-                    var backend = provider.GetRequiredService<IServiceBackend>();
-                    var cache = provider.GetRequiredService<CacheServiceAdapter>();
+                    var azureOpenAI = provider.GetService<AzureOpenAIService>();
+                    var promptTemplate = provider.GetService<PromptTemplateService>();
                     
-                    return new CachedServiceBridge(backend, cache, new CacheKeyGeneratorAdapter(keyGenerator));
+                    return new PredictorServiceBackend(logger, contextManager, cache, keyGenerator, azureOpenAI, promptTemplate);
                 });
                 
                 services.AddHostedService<ProtocolServerHost>();
