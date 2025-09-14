@@ -6,6 +6,8 @@ using LLMEmpoweredCommandPredictor.PredictorService.Context;
 using LLMEmpoweredCommandPredictor.PredictorService.Configuration;
 using LLMEmpoweredCommandPredictor.Protocol.Integration;
 using LLMEmpoweredCommandPredictor.Protocol.Factory;
+using LLMEmpoweredCommandPredictor.Protocol.Adapters;
+using LLMEmpoweredCommandPredictor.PredictorCache;
 
 namespace LLMEmpoweredCommandPredictor.PredictorService;
 
@@ -104,9 +106,30 @@ public class Program
                     Console.WriteLine($"Prompt template not found at: {promptConfig.TemplatePath}");
                 }
                 
+                // Register Cache services
+                services.AddSingleton<InMemoryCache>();
+                services.AddSingleton<CacheKeyGenerator>();
+                
                 // Register Protocol server backend
                 services.AddSingleton<IServiceBackend, PredictorServiceBackend>();
-                services.AddSingleton<ServiceBridge>();
+                
+                // Register cache adapter services
+                services.AddSingleton(provider =>
+                {
+                    var cache = provider.GetRequiredService<InMemoryCache>();
+                    var keyGenerator = provider.GetRequiredService<CacheKeyGenerator>();
+                    return new CacheServiceAdapter(cache, keyGenerator);
+                });
+                
+                services.AddSingleton(provider =>
+                {
+                    var keyGenerator = provider.GetRequiredService<CacheKeyGenerator>();
+                    var backend = provider.GetRequiredService<IServiceBackend>();
+                    var cache = provider.GetRequiredService<CacheServiceAdapter>();
+                    
+                    return new CachedServiceBridge(backend, cache, new CacheKeyGeneratorAdapter(keyGenerator));
+                });
+                
                 services.AddHostedService<ProtocolServerHost>();
                 
                 // Register the background service

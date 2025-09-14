@@ -147,6 +147,71 @@ public class InMemoryCache : ICacheService, IDisposable
         return null;
     }
 
+    /// <summary>
+    /// Attempts to find cached suggestions using prefix matching.
+    /// Searches through multiple prefix keys to find the best match.
+    /// </summary>
+    public async Task<string?> GetByPrefixAsync(List<string> prefixKeys, CancellationToken cancellationToken = default)
+    {
+        if (prefixKeys == null || !prefixKeys.Any())
+            return null;
+
+        Interlocked.Increment(ref totalRequests);
+        lastAccessTime = DateTime.UtcNow;
+
+        // Try each prefix key in order (longest first)
+        foreach (var key in prefixKeys)
+        {
+            if (cache.TryGetValue(key, out var entry))
+            {
+                // Check if entry is expired
+                if (entry.IsExpired)
+                {
+                    // Remove expired entry and continue
+                    await RemoveAsync(key, cancellationToken);
+                    continue;
+                }
+
+                // Found a valid cache entry
+                entry.LastAccessTime = DateTime.UtcNow;
+                UpdateAccessOrder(key);
+                
+                Interlocked.Increment(ref cacheHits);
+                return entry.Response;
+            }
+        }
+
+        Interlocked.Increment(ref cacheMisses);
+        return null;
+    }
+
+    /// <summary>
+    /// Stores response with multiple prefix keys for better matching
+    /// </summary>
+    public async Task SetWithPrefixKeysAsync(List<string> keys, string response, CancellationToken cancellationToken = default)
+    {
+        if (keys == null || !keys.Any() || string.IsNullOrEmpty(response))
+            return;
+
+        var now = DateTime.UtcNow;
+        var entry = new CacheEntry(response)
+        {
+            ExpirationTime = now.Add(config.DefaultTtl),
+            LastAccessTime = now,
+            CreatedTime = now
+        };
+
+        // Store under all prefix keys
+        foreach (var key in keys)
+        {
+            cache.AddOrUpdate(key, entry, (k, oldEntry) => entry);
+            UpdateAccessOrder(key);
+        }
+
+        // Enforce capacity limits
+        await EnforceCapacityLimits();
+    }
+
     /// <inheritdoc />
     public async Task SetAsync(string cacheKey, string response, CancellationToken cancellationToken = default)
     {
