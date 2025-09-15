@@ -2,28 +2,31 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
-using System.Management.Automation.Subsystem.Prediction;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 
 namespace LLMEmpoweredCommandPredictor.PredictorCache;
 
-
-
 /// <summary>
-/// High-performance in-memory cache implementation with LRU eviction and TTL expiration.
+/// High-performance in-memory cache implementation with prefix-based storage and LRU eviction.
 /// Thread-safe and optimized for PowerShell command prediction scenarios.
 /// </summary>
 public class InMemoryCache : ICacheService, IDisposable
 {
-    private readonly CacheConfiguration config;
     private readonly ConcurrentDictionary<string, LinkedList<CacheEntry>> cache;
+    private readonly ConcurrentDictionary<string, DateTime> keyLastAccess;
     private readonly Timer? cleanupTimer;
-    private readonly ILogger<InMemoryCache>? logger;
+    private readonly object lockObject = new object();
+    private readonly ILogger<InMemoryCache> logger;
 
-    // Configuration for entries per key
-    private const int MaxEntriesPerKey = 10;
+    // Configuration constants
+    private const int MAX_PREFIX_LENGTH = 50;
+    private const int MAX_TOTAL_KEYS = 1000;
+    private const int MAX_ENTRIES_PER_KEY = 2; //10;
+    private const int MAX_SUGGESTIONS_RETURNED = 5;
+    private static readonly TimeSpan DEFAULT_TTL = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan CLEANUP_INTERVAL = TimeSpan.FromMinutes(5);
 
     // Statistics tracking
     private long totalRequests;
@@ -35,192 +38,241 @@ public class InMemoryCache : ICacheService, IDisposable
     private bool disposed;
 
     /// <summary>
-    /// Initializes a new instance of the InMemoryCache with default configuration.
+    /// Initializes a new instance of the InMemoryCache.
     /// </summary>
-    public InMemoryCache() : this(new CacheConfiguration())
+    public InMemoryCache()
     {
+        logger = ConsoleLoggerFactory.CreateCacheDebugLogger<InMemoryCache>();
+        cache = new ConcurrentDictionary<string, LinkedList<CacheEntry>>();
+        keyLastAccess = new ConcurrentDictionary<string, DateTime>();
+        startTime = DateTime.UtcNow;
+        lastAccessTime = startTime;
+
+        logger.LogInformation("InMemoryCache initialized at {StartTime}", startTime);
+        logger.LogDebug("Cache configuration: MAX_TOTAL_KEYS={MaxKeys}, MAX_ENTRIES_PER_KEY={MaxEntriesPerKey}, DEFAULT_TTL={DefaultTtl}, CLEANUP_INTERVAL={CleanupInterval}", 
+            MAX_TOTAL_KEYS, MAX_ENTRIES_PER_KEY, DEFAULT_TTL, CLEANUP_INTERVAL);
+
+        // Pre-populate cache with basic commands during initialization
+        _ = Task.Run(async () => await InitializeCacheWithBasicCommandsAsync());
+
+        // Start background cleanup timer
+        cleanupTimer = new Timer(
+            callback: _ => CleanupExpiredEntries(),
+            state: null,
+            dueTime: CLEANUP_INTERVAL,
+            period: CLEANUP_INTERVAL);
+        
+        logger.LogDebug("Background cleanup timer started with interval {CleanupInterval}", CLEANUP_INTERVAL);
     }
 
     /// <summary>
     /// Initializes a new instance of the InMemoryCache with custom configuration.
+    /// This constructor exists for backward compatibility with tests.
     /// </summary>
-    /// <param name="config">Cache configuration options</param>
-    /// <param name="logger">Optional logger for debugging</param>
-    public InMemoryCache(CacheConfiguration config, ILogger<InMemoryCache>? logger = null)
+    /// <param name="config">Cache configuration options (ignored in new implementation)</param>
+    public InMemoryCache(CacheConfiguration config) : this()
     {
-        this.config = config ?? throw new ArgumentNullException(nameof(config));
-        this.logger = logger;
-        cache = new ConcurrentDictionary<string, LinkedList<CacheEntry>>();
-        startTime = DateTime.UtcNow;
-        lastAccessTime = startTime;
+        // Just ignore the config parameter and use our built-in constants
+    }
 
-        logger?.LogInformation("PredictorCache: InMemoryCache initialized with MaxCapacity={MaxCapacity}, DefaultTtl={DefaultTtl}, CleanupInterval={CleanupInterval}",
-            config.MaxCapacity, config.DefaultTtl, config.CleanupInterval);
-
-        // Pre-populate cache with basic commands during initialization
-        // NEED TO BE DELETED, ONLY FOR TESTING
-        _ = Task.Run(async () => await InitializeCacheWithBasicCommandsAsync());
-
-        // Start background cleanup timer if enabled
-        if (this.config.EnableBackgroundCleanup)
-        {
-            cleanupTimer = new Timer(
-                callback: _ => CleanupExpiredEntries(),
-                state: null,
-                dueTime: this.config.CleanupInterval,
-                period: this.config.CleanupInterval);
-
-            logger?.LogDebug("PredictorCache: Background cleanup timer started");
-        }
+    /// <summary>
+    /// Initializes a new instance of the InMemoryCache with custom configuration and logger.
+    /// Both parameters are ignored and the default constructor is called.
+    /// </summary>
+    /// <param name="config">Cache configuration options (ignored in new implementation)</param>
+    /// <param name="logger">Logger instance (ignored, uses built-in cache logger)</param>
+    public InMemoryCache(CacheConfiguration config, ILogger<InMemoryCache> logger) : this()
+    {
+        // Just ignore both parameters and use the default constructor
     }
 
     /// <inheritdoc />
     public async Task<string?> GetAsync(string cacheKey, CancellationToken cancellationToken = default)
     {
+        logger.LogDebug("GetAsync called with cacheKey: '{CacheKey}'", cacheKey);
+
         if (string.IsNullOrEmpty(cacheKey))
-            return null;
-
-        Interlocked.Increment(ref totalRequests);
-        lastAccessTime = DateTime.UtcNow;
-
-        logger?.LogDebug("PredictorCache: GetAsync called for key: {CacheKey}", cacheKey);
-
-        if (cache.TryGetValue(cacheKey, out var entryList) && entryList.Count > 0)
         {
-            // Get the newest (first) entry
-            var entry = entryList.First?.Value;
-            if (entry == null)
-            {
-                Interlocked.Increment(ref cacheMisses);
-                return null;
-            }
-
-            // Check if entry is expired
-            if (entry.IsExpired)
-            {
-                logger?.LogDebug("PredictorCache: Cache entry expired for key: {CacheKey}", cacheKey);
-                // Remove expired entry from the list
-                entryList.RemoveFirst();
-
-                // Clean up any other expired entries from the front
-                await CleanupExpiredEntriesFromListAsync(entryList);
-
-                // If list is empty, remove the key entirely
-                if (entryList.Count == 0)
-                {
-                    cache.TryRemove(cacheKey, out _);
-                }
-
-                Interlocked.Increment(ref cacheMisses);
-                return null;
-            }
-
-            // Update access time
-            entry.LastAccessTime = DateTime.UtcNow;
-
-            Interlocked.Increment(ref cacheHits);
-            logger?.LogDebug("PredictorCache: Cache HIT for key: {CacheKey}", cacheKey);
-            return entry.Response;
+            logger.LogDebug("GetAsync returning null - empty or null cache key");
+            return null;
         }
 
-        Interlocked.Increment(ref cacheMisses);
-        logger?.LogDebug("PredictorCache: Cache MISS for key: {CacheKey}", cacheKey);
-        return null;
-    }
-
-    /// <summary>
-    /// Attempts to find cached suggestions using prefix matching.
-    /// Searches through multiple prefix keys to find the best match.
-    /// </summary>
-    public async Task<string?> GetByPrefixAsync(List<string> prefixKeys, CancellationToken cancellationToken = default)
-    {
-        if (prefixKeys == null || !prefixKeys.Any())
-            return null;
-
         Interlocked.Increment(ref totalRequests);
         lastAccessTime = DateTime.UtcNow;
 
-        // Try each prefix key in order (longest first)
-        foreach (var key in prefixKeys)
-        {
-            if (cache.TryGetValue(key, out var entryList) && entryList.Count > 0)
-            {
-                var entry = entryList.First?.Value;
-                if (entry == null)
-                    continue;
+        // Normalize the cache key
+        var normalizedKey = NormalizeKey(cacheKey);
+        logger.LogDebug("Normalized cache key: '{NormalizedKey}' (from '{OriginalKey}')", normalizedKey, cacheKey);
 
-                // Check if entry is expired
-                if (entry.IsExpired)
+        if (cache.TryGetValue(normalizedKey, out var entryList) && entryList.Count > 0)
+        {
+            logger.LogDebug("Cache key found with {EntryCount} entries", entryList.Count);
+
+            // Update access time for this specific key
+            keyLastAccess.TryAdd(normalizedKey, DateTime.UtcNow);
+            keyLastAccess[normalizedKey] = DateTime.UtcNow;
+
+            // Clean up expired entries first
+            var entriesBeforeCleanup = entryList.Count;
+            await CleanupExpiredEntriesFromListAsync(entryList);
+            var entriesAfterCleanup = entryList.Count;
+            
+            if (entriesBeforeCleanup != entriesAfterCleanup)
+            {
+                logger.LogDebug("Cleanup removed {RemovedEntries} expired entries ({BeforeCount} -> {AfterCount})", 
+                    entriesBeforeCleanup - entriesAfterCleanup, entriesBeforeCleanup, entriesAfterCleanup);
+            }
+
+            if (entryList.Count == 0)
+            {
+                // All entries were expired, remove the key
+                cache.TryRemove(normalizedKey, out _);
+                keyLastAccess.TryRemove(normalizedKey, out _);
+                Interlocked.Increment(ref cacheMisses);
+                logger.LogDebug("Cache MISS - all entries expired for key '{NormalizedKey}'", normalizedKey);
+                return null;
+            }
+
+            // Get the last (most recent) entries - up to MAX_SUGGESTIONS_RETURNED
+            var recentEntries = entryList.TakeLast(MAX_SUGGESTIONS_RETURNED).ToList();
+            logger.LogDebug("Retrieved {RecentEntryCount} recent entries (max {MaxSuggestions})", 
+                recentEntries.Count, MAX_SUGGESTIONS_RETURNED);
+            
+            if (recentEntries.Any())
+            {
+                // Update access times for returned entries
+                foreach (var entry in recentEntries)
                 {
-                    // Remove expired entry and continue
-                    await RemoveAsync(key, cancellationToken);
-                    continue;
+                    entry.LastAccessTime = DateTime.UtcNow;
                 }
 
-                // Found a valid cache entry
-                entry.LastAccessTime = DateTime.UtcNow;
-
+                // Return the response from the most recent entry
+                var mostRecentEntry = recentEntries.Last();
                 Interlocked.Increment(ref cacheHits);
-                return entry.Response;
+                
+                var responseLength = mostRecentEntry.Response?.Length ?? 0;
+                logger.LogDebug("Cache HIT for key '{NormalizedKey}' - returning response ({ResponseLength} chars, created: {CreatedTime})", 
+                    normalizedKey, responseLength, mostRecentEntry.CreatedTime);
+                
+                return mostRecentEntry.Response;
             }
+        }
+        else
+        {
+            logger.LogDebug("Cache key '{NormalizedKey}' not found in cache", normalizedKey);
         }
 
         Interlocked.Increment(ref cacheMisses);
+        logger.LogDebug("Cache MISS for key '{NormalizedKey}' - no valid entries found", normalizedKey);
+        
+        // Log current cache statistics
+        var stats = GetStatistics();
+        logger.LogDebug("Current cache stats: {TotalRequests} requests, {CacheHits} hits, {CacheMisses} misses, {TotalEntries} entries, {CacheCount} keys", 
+            stats.TotalRequests, stats.CacheHits, stats.CacheMisses, stats.TotalEntries, cache.Count);
+            
         return null;
-    }
-
-    /// <summary>
-    /// Stores response with multiple prefix keys for better matching
-    /// </summary>
-    public async Task SetWithPrefixKeysAsync(List<string> keys, string response, CancellationToken cancellationToken = default)
-    {
-        if (keys == null || !keys.Any() || string.IsNullOrEmpty(response))
-            return;
-
-        // Store the response under each prefix key using SetAsync
-        foreach (var key in keys)
-        {
-            await SetAsync(key, response, cancellationToken);
-        }
     }
 
     /// <inheritdoc />
-    public async Task SetAsync(string cacheKey, string response, CancellationToken cancellationToken = default)
+    public async Task SetAsync(string command, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrEmpty(cacheKey) || string.IsNullOrEmpty(response))
-            return;
+        logger.LogDebug("SetAsync called with command: '{Command}'", command);
 
-        logger?.LogDebug("PredictorCache: SetAsync called for key: {CacheKey}, response length: {ResponseLength}",
-            cacheKey, response.Length);
-
-        var now = DateTime.UtcNow;
-        var entry = new CacheEntry(response)
+        if (string.IsNullOrEmpty(command))
         {
-            ExpirationTime = now.Add(config.DefaultTtl),
-            LastAccessTime = now,
-            CreatedTime = now
-        };
+            logger.LogDebug("SetAsync returning early - empty command");
+            return;
+        }
 
-        // Add entry to LinkedList (newest entries go to the front)
-        cache.AddOrUpdate(cacheKey,
-            // Create new LinkedList with this entry if key doesn't exist
-            new LinkedList<CacheEntry>(new[] { entry }),
-            // If key exists, add this entry to the front of existing list
-            (key, existingList) =>
+        var normalizedCommand = NormalizeKey(command);
+        var now = DateTime.UtcNow;
+        logger.LogDebug("Normalized command: '{NormalizedCommand}' (from '{OriginalKey}')", normalizedCommand, command);
+
+        // Generate all prefix keys for this command
+        var prefixKeys = GenerateAllPrefixKeys(normalizedCommand);
+        logger.LogDebug("Generated {PrefixKeyCount} prefix keys for command (max length: {MaxPrefixLength}): [{PrefixKeys}]", 
+            prefixKeys.Count, MAX_PREFIX_LENGTH, string.Join(", ", prefixKeys.Take(5).Select(k => $"'{k}'")));
+
+        // Check if we need to perform LRU cleanup before adding new entries
+        var cacheCountBeforeCleanup = cache.Count;
+        if (cache.Count + prefixKeys.Count > MAX_TOTAL_KEYS)
+        {
+            logger.LogDebug("Cache size limit approached ({CurrentCount} + {NewKeys} > {MaxKeys}), performing LRU cleanup", 
+                cache.Count, prefixKeys.Count, MAX_TOTAL_KEYS);
+            await PerformLRUCleanupAsync();
+            logger.LogDebug("LRU cleanup completed ({BeforeCount} -> {AfterCount} keys)", 
+                cacheCountBeforeCleanup, cache.Count);
+        }
+
+        var entriesAdded = 0;
+        var entriesUpdated = 0;
+
+        // Store a separate CacheEntry for each prefix key
+        foreach (var prefixKey in prefixKeys)
+        {
+            // Create a new CacheEntry for this prefix
+            var entry = new CacheEntry(command)
             {
-                existingList.AddFirst(entry);
+                ExpirationTime = now.Add(DEFAULT_TTL),
+                LastAccessTime = now,
+                CreatedTime = now
+            };
 
-                // Enforce per-key entry limit
-                while (existingList.Count > MaxEntriesPerKey)
+            var wasNewKey = false;
+            var entriesRemovedDueToLimit = 0;
+
+            // Add entry to the LinkedList for this prefix (newest entries go to the back)
+            cache.AddOrUpdate(prefixKey,
+                // Create new LinkedList with this entry if key doesn't exist
+                addValueFactory: key =>
                 {
-                    existingList.RemoveLast(); // Remove oldest entries
-                }
+                    wasNewKey = true;
+                    entriesAdded++;
+                    return new LinkedList<CacheEntry>(new[] { entry });
+                },
+                // If key exists, add this entry to the back of existing list
+                updateValueFactory: (key, existingList) =>
+                {
+                    lock (existingList)
+                    {
+                        var entriesBeforeAdd = existingList.Count;
+                        existingList.AddLast(entry);
+                        entriesUpdated++;
 
-                return existingList;
-            });
+                        // Enforce per-key entry limit (remove oldest entries from front)
+                        while (existingList.Count > MAX_ENTRIES_PER_KEY)
+                        {
+                            existingList.RemoveFirst();
+                            entriesRemovedDueToLimit++;
+                        }
 
-        logger?.LogDebug("PredictorCache: Cache entry stored for key: {CacheKey}, total keys: {TotalKeys}",
-            cacheKey, cache.Count);
+                        if (entriesRemovedDueToLimit > 0)
+                        {
+                            logger.LogDebug("Removed {RemovedCount} old entries for prefix '{PrefixKey}' due to limit ({BeforeCount} -> {AfterCount})", 
+                                entriesRemovedDueToLimit, prefixKey, entriesBeforeAdd + 1, existingList.Count);
+                        }
+                    }
+                    return existingList;
+                });
+
+            // Update access time for this prefix key
+            keyLastAccess.TryAdd(prefixKey, now);
+            keyLastAccess[prefixKey] = now;
+
+            if (wasNewKey)
+            {
+                logger.LogDebug("Created new cache entry for prefix '{PrefixKey}' (expires: {ExpirationTime})", 
+                    prefixKey, entry.ExpirationTime);
+            }
+        }
+
+        logger.LogDebug("SetAsync completed - added {EntriesAdded} new keys, updated {EntriesUpdated} existing keys for command '{NormalizedCommand}'", 
+            entriesAdded, entriesUpdated, normalizedCommand);
+
+        // Log cache statistics after adding entries
+        var stats = GetStatistics();
+        logger.LogDebug("Cache stats after SetAsync: {TotalEntries} entries, {CacheCount} keys, {MemoryUsage} bytes", 
+            stats.TotalEntries, cache.Count, stats.MemoryUsageBytes);
 
         await Task.CompletedTask;
     }
@@ -228,12 +280,30 @@ public class InMemoryCache : ICacheService, IDisposable
     /// <inheritdoc />
     public async Task RemoveAsync(string cacheKey, CancellationToken cancellationToken = default)
     {
+        logger.LogDebug("RemoveAsync called with cacheKey: '{CacheKey}'", cacheKey);
+
         if (string.IsNullOrEmpty(cacheKey))
+        {
+            logger.LogDebug("RemoveAsync returning early - empty or null cache key");
             return;
+        }
 
-        cache.TryRemove(cacheKey, out _);
-
-        logger?.LogDebug("PredictorCache: Removed cache key: {CacheKey}", cacheKey);
+        var normalizedKey = NormalizeKey(cacheKey);
+        logger.LogDebug("Normalized key for removal: '{NormalizedKey}' (from '{OriginalKey}')", normalizedKey, cacheKey);
+        
+        // Remove the specific key
+        var wasRemoved = cache.TryRemove(normalizedKey, out var removedEntries);
+        var accessTimeRemoved = keyLastAccess.TryRemove(normalizedKey, out _);
+        
+        if (wasRemoved)
+        {
+            var entryCount = removedEntries?.Count ?? 0;
+            logger.LogDebug("Successfully removed cache key '{NormalizedKey}' with {EntryCount} entries", normalizedKey, entryCount);
+        }
+        else
+        {
+            logger.LogDebug("Cache key '{NormalizedKey}' was not found for removal", normalizedKey);
+        }
 
         await Task.CompletedTask;
     }
@@ -241,14 +311,21 @@ public class InMemoryCache : ICacheService, IDisposable
     /// <inheritdoc />
     public async Task ClearAsync(CancellationToken cancellationToken = default)
     {
+        logger.LogDebug("ClearAsync called - clearing all cache entries");
+
+        var cacheKeysBeforeClear = cache.Count;
+        var accessKeysBeforeClear = keyLastAccess.Count;
+
         cache.Clear();
+        keyLastAccess.Clear();
 
         // Reset statistics (except start time)
-        Interlocked.Exchange(ref totalRequests, 0);
-        Interlocked.Exchange(ref cacheHits, 0);
-        Interlocked.Exchange(ref cacheMisses, 0);
+        var oldTotalRequests = Interlocked.Exchange(ref totalRequests, 0);
+        var oldCacheHits = Interlocked.Exchange(ref cacheHits, 0);
+        var oldCacheMisses = Interlocked.Exchange(ref cacheMisses, 0);
 
-        logger?.LogDebug("PredictorCache: Cache cleared");
+        logger.LogInformation("Cache cleared - removed {CacheKeys} cache keys, {AccessKeys} access keys. Reset stats: {TotalRequests} requests, {CacheHits} hits, {CacheMisses} misses", 
+            cacheKeysBeforeClear, accessKeysBeforeClear, oldTotalRequests, oldCacheHits, oldCacheMisses);
 
         await Task.CompletedTask;
     }
@@ -266,10 +343,13 @@ public class InMemoryCache : ICacheService, IDisposable
 
         foreach (var entryList in cache.Values)
         {
-            totalEntries += entryList.Count;
-            foreach (var entry in entryList)
+            lock (entryList)
             {
-                memoryUsage += entry.EstimatedSizeBytes;
+                totalEntries += entryList.Count;
+                foreach (var entry in entryList)
+                {
+                    memoryUsage += entry.EstimatedSizeBytes;
+                }
             }
         }
 
@@ -286,6 +366,78 @@ public class InMemoryCache : ICacheService, IDisposable
     }
 
     /// <summary>
+    /// Generates all prefix keys for a given command (1 character to min(command.Length, MAX_PREFIX_LENGTH))
+    /// </summary>
+    private List<string> GenerateAllPrefixKeys(string command)
+    {
+        var keys = new List<string>();
+        
+        if (string.IsNullOrEmpty(command))
+            return keys;
+
+        var maxLength = Math.Min(command.Length, MAX_PREFIX_LENGTH);
+        
+        for (int i = 1; i <= maxLength; i++)
+        {
+            keys.Add(command.Substring(0, i));
+        }
+
+        return keys;
+    }
+
+    /// <summary>
+    /// Normalizes a cache key for consistent storage and lookup
+    /// </summary>
+    private string NormalizeKey(string key)
+    {
+        return key?.Trim().ToLowerInvariant() ?? string.Empty;
+    }
+
+    /// <summary>
+    /// Performs LRU cleanup by removing the least recently accessed keys
+    /// </summary>
+    private async Task PerformLRUCleanupAsync()
+    {
+        try
+        {
+            var keysBeforeCleanup = cache.Count;
+            logger.LogDebug("Starting LRU cleanup - current cache has {KeyCount} keys", keysBeforeCleanup);
+
+            // Find the oldest 20% of keys to remove
+            var keysToRemove = keyLastAccess
+                .OrderBy(kvp => kvp.Value)
+                .Take(cache.Count / 5) // Remove 20%
+                .Select(kvp => kvp.Key)
+                .ToList();
+
+            logger.LogDebug("LRU cleanup will remove {KeysToRemoveCount} oldest keys (20% of {TotalKeys})", 
+                keysToRemove.Count, keysBeforeCleanup);
+
+            var actuallyRemoved = 0;
+            foreach (var key in keysToRemove)
+            {
+                if (cache.TryRemove(key, out var removedEntries))
+                {
+                    actuallyRemoved++;
+                    var entryCount = removedEntries?.Count ?? 0;
+                    logger.LogDebug("LRU removed key '{Key}' with {EntryCount} entries (last access: {LastAccess})", 
+                        key, entryCount, keyLastAccess.TryGetValue(key, out var lastAccess) ? lastAccess : DateTime.MinValue);
+                }
+                keyLastAccess.TryRemove(key, out _);
+            }
+
+            logger.LogDebug("LRU cleanup completed - removed {ActuallyRemoved}/{PlannedToRemove} keys ({BeforeCount} -> {AfterCount})", 
+                actuallyRemoved, keysToRemove.Count, keysBeforeCleanup, cache.Count);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Error during LRU cleanup");
+        }
+
+        await Task.CompletedTask;
+    }
+
+    /// <summary>
     /// Cleans up expired cache entries from all LinkedLists in the cache.
     /// This is called by the background timer.
     /// </summary>
@@ -294,87 +446,170 @@ public class InMemoryCache : ICacheService, IDisposable
         if (disposed)
             return;
 
-        logger?.LogInformation("PredictorCache: Background cleanup started at {Time}", DateTime.UtcNow);
-
+        var startTime = DateTime.UtcNow;
         var keysToRemove = new List<string>();
-        var cleanedCount = 0;
+        var totalExpiredEntries = 0;
+        var keysProcessed = 0;
 
         try
         {
-            // Iterate through all cache keys
+            logger.LogDebug("Starting background cleanup of expired entries - cache has {KeyCount} keys", cache.Count);
+
             foreach (var kvp in cache)
             {
                 var key = kvp.Key;
                 var entryList = kvp.Value;
+                keysProcessed++;
 
-                if (entryList == null || entryList.Count == 0)
+                if (entryList == null)
                 {
                     keysToRemove.Add(key);
+                    logger.LogDebug("Found null entry list for key '{Key}' - marking for removal", key);
                     continue;
                 }
 
-                // Clean expired entries from this list (from back to front since oldest are at back)
-                var currentNode = entryList.Last;
-                while (currentNode != null)
+                lock (entryList)
                 {
-                    var prevNode = currentNode.Previous;
-
-                    if (currentNode.Value.IsExpired)
+                    var entriesBeforeCleanup = entryList.Count;
+                    
+                    // Remove expired entries from the front (oldest first)
+                    while (entryList.Count > 0 && entryList.First?.Value?.IsExpired == true)
                     {
-                        entryList.Remove(currentNode);
-                        cleanedCount++;
-                    }
-                    else
-                    {
-                        // Since we're going from newest to oldest, if this entry is not expired,
-                        // all entries before it are also not expired (they're newer)
-                        break;
+                        entryList.RemoveFirst();
+                        totalExpiredEntries++;
                     }
 
-                    currentNode = prevNode;
-                }
+                    var entriesAfterCleanup = entryList.Count;
+                    var expiredInThisKey = entriesBeforeCleanup - entriesAfterCleanup;
 
-                // If list is empty after cleanup, mark key for removal
-                if (entryList.Count == 0)
-                {
-                    keysToRemove.Add(key);
+                    if (expiredInThisKey > 0)
+                    {
+                        logger.LogDebug("Removed {ExpiredCount} expired entries from key '{Key}' ({BeforeCount} -> {AfterCount})", 
+                            expiredInThisKey, key, entriesBeforeCleanup, entriesAfterCleanup);
+                    }
+
+                    // If list is empty after cleanup, mark key for removal
+                    if (entryList.Count == 0)
+                    {
+                        keysToRemove.Add(key);
+                        logger.LogDebug("Key '{Key}' is empty after cleanup - marking for removal", key);
+                    }
                 }
             }
 
             // Remove empty keys
+            var keysActuallyRemoved = 0;
             foreach (var key in keysToRemove)
             {
-                cache.TryRemove(key, out _);
+                if (cache.TryRemove(key, out _))
+                {
+                    keysActuallyRemoved++;
+                }
+                keyLastAccess.TryRemove(key, out _);
             }
 
-            if (cleanedCount > 0 || keysToRemove.Count > 0)
+            var duration = DateTime.UtcNow - startTime;
+            logger.LogDebug("Background cleanup completed in {Duration}ms - processed {KeysProcessed} keys, removed {ExpiredEntries} expired entries, removed {EmptyKeys} empty keys", 
+                duration.TotalMilliseconds, keysProcessed, totalExpiredEntries, keysActuallyRemoved);
+
+            if (totalExpiredEntries > 0 || keysActuallyRemoved > 0)
             {
-                logger?.LogDebug("PredictorCache: Background cleanup removed {CleanedEntries} expired entries and {EmptyKeys} empty keys",
-                    cleanedCount, keysToRemove.Count);
+                logger.LogInformation("Cache cleanup removed {ExpiredEntries} expired entries and {EmptyKeys} empty keys in {Duration}ms", 
+                    totalExpiredEntries, keysActuallyRemoved, duration.TotalMilliseconds);
             }
         }
         catch (Exception ex)
         {
-            logger?.LogWarning(ex, "PredictorCache: Error during background cleanup");
+            logger.LogWarning(ex, "Error during background cleanup of expired entries");
         }
     }
 
     /// <summary>
     /// Helper method to clean up expired entries from a specific LinkedList.
-    /// Used during on-access cleanup.
     /// </summary>
     private async Task CleanupExpiredEntriesFromListAsync(LinkedList<CacheEntry> entryList)
     {
-        if (entryList == null || entryList.Count == 0)
+        if (entryList == null)
             return;
 
-        // Clean from the front (newest entries) until we find a non-expired entry
-        while (entryList.Count > 0 && entryList.First?.Value?.IsExpired == true)
+        lock (entryList)
         {
-            entryList.RemoveFirst();
+            // Remove expired entries from the front (oldest entries)
+            while (entryList.Count > 0 && entryList.First?.Value?.IsExpired == true)
+            {
+                entryList.RemoveFirst();
+            }
         }
 
         await Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// Pre-populates the cache with basic PowerShell commands.
+    /// </summary>
+    private async Task InitializeCacheWithBasicCommandsAsync()
+    {
+        var startTime = DateTime.UtcNow;
+        
+        try
+        {
+            logger.LogDebug("Starting cache initialization with basic commands");
+
+            // Define basic commands as a list of command strings
+            var basicCommands = new List<string>
+            {
+                "git status",
+                "git add",
+                "git commit",
+                "git push",
+                "git pull",
+                "git branch",
+                "git checkout",
+                "get-process",
+                "get-service",
+                "get-childitem",
+                "docker ps",
+                "docker run",
+                "ls",
+                "cd" 
+            };
+
+            logger.LogDebug("Initializing cache with {CommandCount} basic commands: [{Commands}]", 
+                basicCommands.Count, string.Join(", ", basicCommands.Take(5).Select(c => $"'{c}'")));
+
+            var successfullyAdded = 0;
+            var errors = 0;
+
+            // Cache each command using SetAsync
+            foreach (var command in basicCommands)
+            {
+                try
+                {
+                    await SetAsync(command);
+                    successfullyAdded++;
+                    logger.LogDebug("Successfully initialized cache entry for command '{Command}'", command);
+                }
+                catch (Exception ex)
+                {
+                    errors++;
+                    logger.LogWarning(ex, "Failed to initialize cache entry for command '{Command}'", command);
+                }
+            }
+
+            var duration = DateTime.UtcNow - startTime;
+            logger.LogInformation("Cache initialization completed in {Duration}ms - successfully added {SuccessCount}/{TotalCount} commands ({ErrorCount} errors)", 
+                duration.TotalMilliseconds, successfullyAdded, basicCommands.Count, errors);
+
+            // Log final cache statistics after initialization
+            var stats = GetStatistics();
+            logger.LogDebug("Cache stats after initialization: {TotalEntries} entries, {CacheCount} keys, {MemoryUsage} bytes", 
+                stats.TotalEntries, cache.Count, stats.MemoryUsageBytes);
+        }
+        catch (Exception ex)
+        {
+            var duration = DateTime.UtcNow - startTime;
+            logger.LogError(ex, "Cache initialization failed after {Duration}ms", duration.TotalMilliseconds);
+        }
     }
 
     /// <summary>
@@ -389,88 +624,8 @@ public class InMemoryCache : ICacheService, IDisposable
 
         cleanupTimer?.Dispose();
         cache.Clear();
+        keyLastAccess.Clear();
 
         GC.SuppressFinalize(this);
-    }
-    
-    /// ----------------------------- TO BE DELETED WHEN SETASYNC IS PROPERLY CALLED -----------------------------
-    /// <summary>
-    /// Pre-populates the cache with basic PowerShell commands using prefix-based keys.
-    /// This ensures SetAsync is called and cache has useful suggestions from startup.
-    /// TEMPORARY METHOD - TO BE DELETED WHEN PROPER COMMAND DETECTION IS IMPLEMENTED
-    /// </summary>
-    private async Task InitializeCacheWithBasicCommandsAsync()
-    {
-        try
-        {
-            logger?.LogInformation("PredictorCache: Starting cache initialization with basic commands");
-
-            // Define basic command patterns and their suggestions (as simple JSON without PredictiveSuggestion objects)
-            var basicCommands = new Dictionary<string, string>
-            {
-                // Git commands
-                {
-                    "git",
-                    """{"Suggestions":["git status","git add .","git commit -m \"message\"","git push","git pull"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
-                },
-                {
-                    "git_s",
-                    """{"Suggestions":["git status","git stash","git show","git switch"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
-                },
-                {
-                    "git_st",
-                    """{"Suggestions":["git status","git stash","git stash pop"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
-                },
-                // PowerShell Get- commands
-                {
-                    "get-",
-                    """{"Suggestions":["Get-Process","Get-Service","Get-ChildItem","Get-Content","Get-Location"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
-                },
-                {
-                    "get-p",
-                    """{"Suggestions":["Get-Process","Get-Process | Sort-Object CPU -Descending","Get-Process | Where-Object {$_.ProcessName -like '*pattern*'}"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
-                },
-                // Docker commands
-                {
-                    "docker",
-                    """{"Suggestions":["docker ps","docker images","docker run","docker build","docker stop"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
-                },
-                {
-                    "docker_p",
-                    """{"Suggestions":["docker ps","docker ps -a","docker pull"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
-                },
-                // Common PowerShell patterns
-                {
-                    "ls",
-                    """{"Suggestions":["ls -la","ls | Sort-Object Name","ls | Where-Object {$_.Length -gt 1MB}"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
-                }
-            };
-
-            // Cache each command pattern using SetAsync
-            foreach (var (cacheKey, response) in basicCommands)
-            {
-                try
-                {
-                    // Use SetAsync to store the data (this will call the method we want to test)
-                    await SetAsync(cacheKey, response);
-
-                    logger?.LogDebug("PredictorCache: Initialized cache entry for key: {CacheKey}", cacheKey);
-                }
-                catch (Exception ex)
-                {
-                    logger?.LogWarning("PredictorCache: Failed to cache suggestions for '{CacheKey}': {Error}",
-                        cacheKey, ex.Message);
-                }
-            }
-
-            // Log cache statistics after initialization
-            var stats = GetStatistics();
-            logger?.LogInformation("PredictorCache: Cache initialization complete. Total entries: {TotalEntries}, Memory usage: {MemoryUsageMB:F2} MB",
-                stats.TotalEntries, stats.MemoryUsageBytes / (1024.0 * 1024.0));
-        }
-        catch (Exception ex)
-        {
-            logger?.LogError(ex, "PredictorCache: Error during cache initialization");
-        }
     }
 }

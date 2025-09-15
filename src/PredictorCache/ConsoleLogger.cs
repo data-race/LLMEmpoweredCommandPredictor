@@ -90,6 +90,81 @@ public class ConsoleLogger<T> : ILogger<T>
 }
 
 /// <summary>
+/// Cache-specific debug logger that shows DEBUG logs in console AND writes to file
+/// </summary>
+public class CacheDebugLogger<T> : ILogger<T>
+{
+    private readonly string categoryName;
+    private readonly string logFilePath;
+
+    public CacheDebugLogger()
+    {
+        this.categoryName = typeof(T).Name;
+        
+        // Create log file in temp directory
+        var tempDir = Path.GetTempPath();
+        var fileName = "LLMCommandPredictor_Cache.log";
+        this.logFilePath = Path.Combine(tempDir, fileName);
+        
+        // Ensure directory exists
+        Directory.CreateDirectory(Path.GetDirectoryName(this.logFilePath)!);
+    }
+
+    public IDisposable BeginScope<TState>(TState state) => NullScope.Instance;
+
+    public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Debug;
+
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        if (!IsEnabled(logLevel))
+            return;
+
+        var timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
+        var levelString = GetLevelString(logLevel);
+        var message = formatter(state, exception);
+        
+        var logEntry = $"[{timestamp}] [{levelString}] [{categoryName}] {message}";
+        
+        try
+        {
+            // Always write to file
+            File.AppendAllText(logFilePath, logEntry + Environment.NewLine);
+            
+            // ALWAYS write to console (including DEBUG logs)
+            Console.WriteLine(logEntry);
+            
+            if (exception != null)
+            {
+                var exceptionEntry = $"[{timestamp}] [{levelString}] [{categoryName}] Exception: {exception}";
+                File.AppendAllText(logFilePath, exceptionEntry + Environment.NewLine);
+                Console.WriteLine(exceptionEntry);
+            }
+        }
+        catch
+        {
+            // Ignore file write errors to prevent logging from breaking the application
+        }
+    }
+
+    private static string GetLevelString(LogLevel logLevel) => logLevel switch
+    {
+        LogLevel.Trace => "TRACE",
+        LogLevel.Debug => "DEBUG",
+        LogLevel.Information => "INFO ",
+        LogLevel.Warning => "WARN ",
+        LogLevel.Error => "ERROR",
+        LogLevel.Critical => "CRIT ",
+        _ => "UNKN "
+    };
+
+    private sealed class NullScope : IDisposable
+    {
+        public static NullScope Instance { get; } = new();
+        public void Dispose() { }
+    }
+}
+
+/// <summary>
 /// Factory for creating console loggers
 /// </summary>
 public static class ConsoleLoggerFactory
@@ -110,4 +185,10 @@ public static class ConsoleLoggerFactory
     /// Logs to $env:TEMP\LLMCommandPredictor_Cache.log
     /// </summary>
     public static ILogger<T> CreateCacheLogger<T>() => new ConsoleLogger<T>(LogLevel.Debug, "LLMCommandPredictor_Cache.log");
+    
+    /// <summary>
+    /// Creates a cache-specific logger that shows DEBUG logs in console AND writes to file
+    /// Logs to $env:TEMP\LLMCommandPredictor_Cache.log
+    /// </summary>
+    public static ILogger<T> CreateCacheDebugLogger<T>() => new CacheDebugLogger<T>();
 }
