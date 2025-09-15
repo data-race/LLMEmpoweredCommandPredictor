@@ -2,8 +2,6 @@ using LLMEmpoweredCommandPredictor.Protocol.Client;
 using LLMEmpoweredCommandPredictor.Protocol.Contracts;
 using LLMEmpoweredCommandPredictor.Protocol.Models;
 using LLMEmpoweredCommandPredictor.Protocol.Server;
-using LLMEmpoweredCommandPredictor.Protocol.Integration;
-using LLMEmpoweredCommandPredictor.Protocol.Abstractions;
 
 namespace LLMEmpoweredCommandPredictor.Protocol.Factory;
 
@@ -60,22 +58,4 @@ public static class ProtocolFactory
     }
 
 
-    /// <summary>
-    /// Creates a cached server instance with the specified backend implementation.
-    /// Note: Requires cache and key generator implementations to be provided.
-    /// </summary>
-    /// <param name="backend">Backend service implementation</param>
-    /// <param name="cache">Cache service implementation</param>
-    /// <param name="keyGenerator">Cache key generator implementation</param>
-    /// <param name="pipeName">Named pipe name (optional)</param>
-    /// <returns>Configured server instance with caching</returns>
-    public static SuggestionServiceServer CreateCachedServer(
-        IServiceBackend backend,
-        ICacheService cache,
-        ICacheKeyGenerator keyGenerator,
-        string pipeName = "LLMEmpoweredCommandPredictor.SuggestionService")
-    {
-        var cachedService = new CachedServiceBridge(backend, cache, keyGenerator);
-        return new SuggestionServiceServer(cachedService, pipeName);
-    }
 }
