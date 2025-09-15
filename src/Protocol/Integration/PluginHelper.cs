@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using LLMEmpoweredCommandPredictor.Protocol.Client;
 using LLMEmpoweredCommandPredictor.Protocol.Models;
 using LLMEmpoweredCommandPredictor.Protocol.Adapters;
+using LLMEmpoweredCommandPredictor.Protocol.Extensions;
 
 namespace LLMEmpoweredCommandPredictor.Protocol.Integration;
 
@@ -63,15 +64,23 @@ public class PluginHelper : IDisposable
             // 2. Make IPC call to backend service
             var response = await _ipcClient.GetSuggestionsAsync(protocolRequest, cancellationToken);
 
-            // 3. Return suggestions from response (convert IReadOnlyList to IList)
-            return response.Suggestions.ToList();
+            // 3. Convert DTO to PowerShell suggestions
+            return response.Suggestions.ToPowerShell();
         }
         catch (OperationCanceledException)
         {
             return new List<System.Management.Automation.Subsystem.Prediction.PredictiveSuggestion>();
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            // Log the error for debugging
+            System.Console.WriteLine($"[PluginHelper] Error in GetSuggestionsAsync: {ex.Message}");
+            System.Console.WriteLine($"[PluginHelper] Exception type: {ex.GetType().Name}");
+            if (ex.InnerException != null)
+            {
+                System.Console.WriteLine($"[PluginHelper] Inner exception: {ex.InnerException.Message}");
+            }
+            
             // Return fallback suggestions on error
             return CreateFallbackSuggestions(pluginContext);
         }
@@ -92,27 +101,41 @@ public class PluginHelper : IDisposable
     {
         try
         {
+            System.Console.WriteLine($"[PluginHelper] Starting GetSuggestions with timeout: {_connectionSettings.TimeoutMs}ms");
+            
             // Use a short timeout to respect the 20ms constraint
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(_connectionSettings.TimeoutMs));
 
             var task = GetSuggestionsAsync(pluginContext, maxSuggestions, timeoutCts.Token);
             
+            System.Console.WriteLine($"[PluginHelper] Waiting for task completion...");
+            
             #pragma warning disable VSTHRD002 // Synchronously waiting on tasks or awaiters may cause deadlocks
             // Wait with timeout
             if (task.Wait(_connectionSettings.TimeoutMs, cancellationToken))
             {
+                System.Console.WriteLine($"[PluginHelper] Task completed successfully, returning {task.Result.Count} suggestions");
                 return task.Result;
             }
             #pragma warning restore VSTHRD002
             else
             {
+                System.Console.WriteLine($"[PluginHelper] Task timed out after {_connectionSettings.TimeoutMs}ms, returning fallback");
                 // Timeout - return fallback
                 return CreateFallbackSuggestions(pluginContext);
             }
         }
-        catch
+        catch (Exception ex)
         {
+            // Log the error for debugging
+            System.Console.WriteLine($"[PluginHelper] Error in GetSuggestions (sync): {ex.Message}");
+            System.Console.WriteLine($"[PluginHelper] Exception type: {ex.GetType().Name}");
+            if (ex.InnerException != null)
+            {
+                System.Console.WriteLine($"[PluginHelper] Inner exception: {ex.InnerException.Message}");
+            }
+            
             return CreateFallbackSuggestions(pluginContext);
         }
     }

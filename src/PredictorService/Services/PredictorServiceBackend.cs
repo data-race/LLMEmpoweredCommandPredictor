@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using LLMEmpoweredCommandPredictor.Protocol.Integration;
 using LLMEmpoweredCommandPredictor.Protocol.Models;
 using LLMEmpoweredCommandPredictor.Protocol.Contracts;
+using LLMEmpoweredCommandPredictor.Protocol.Extensions;
 using LLMEmpoweredCommandPredictor.PredictorService.Context;
 using LLMEmpoweredCommandPredictor.PredictorCache;
 using System.Management.Automation.Subsystem.Prediction;
@@ -99,7 +100,7 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
         if (request == null)
         {
             return new SuggestionResponse(
-                suggestions: new List<PredictiveSuggestion>(),
+                suggestions: new List<PredictiveSuggestionDto>(),
                 source: "error",
                 warningMessage: "Invalid request"
             );
@@ -108,13 +109,26 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
         try
         {
             _logger.LogInformation("PredictorServiceBackend: GetSuggestionsAsync called for input: '{UserInput}'", request.UserInput);
+            System.Console.WriteLine($"[PredictorServiceBackend] GetSuggestionsAsync called for input: '{request.UserInput}'");
             
             // 1. Generate cache key
             var cacheKey = _keyGenerator.GenerateCacheKey(request);
             _logger.LogDebug("PredictorServiceBackend: Generated cache key: '{CacheKey}'", cacheKey);
+            System.Console.WriteLine($"[PredictorServiceBackend] Generated cache key: '{cacheKey}'");
             
-            // 2. Check cache ONLY - do not generate suggestions
+            // 2. Try exact match first
             var cachedResponse = await _cache.GetAsync(cacheKey, cancellationToken);
+            System.Console.WriteLine($"[PredictorServiceBackend] Exact match result: {(cachedResponse != null ? "HIT" : "MISS")}");
+            
+            // 3. If no exact match, try prefix matching
+            if (cachedResponse == null)
+            {
+                var prefixKeys = _keyGenerator.FindMatchingPrefixKeys(request);
+                System.Console.WriteLine($"[PredictorServiceBackend] Trying prefix match with {prefixKeys.Count} keys: [{string.Join(", ", prefixKeys)}]");
+                _logger.LogDebug("PredictorServiceBackend: Trying prefix match with {Count} keys", prefixKeys.Count);
+                cachedResponse = await _cache.GetByPrefixAsync(prefixKeys, cancellationToken);
+                System.Console.WriteLine($"[PredictorServiceBackend] Prefix match result: {(cachedResponse != null ? "HIT" : "MISS")}");
+            }
             if (cachedResponse != null)
             {
                 try
@@ -145,7 +159,7 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
 
             // 3. Cache miss - return empty suggestions (no generation)
             return new SuggestionResponse(
-                suggestions: new List<PredictiveSuggestion>(),
+                suggestions: new List<PredictiveSuggestionDto>(),
                 source: "cache-only",
                 warningMessage: "No cached suggestions available"
             );
@@ -153,7 +167,7 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
         catch (OperationCanceledException)
         {
             return new SuggestionResponse(
-                suggestions: new List<PredictiveSuggestion>(),
+                suggestions: new List<PredictiveSuggestionDto>(),
                 source: "cancelled",
                 warningMessage: "Request was cancelled"
             );
@@ -162,7 +176,7 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
         {
             _logger.LogError(ex, "PredictorServiceBackend: Error getting suggestions");
             return new SuggestionResponse(
-                suggestions: new List<PredictiveSuggestion>(),
+                suggestions: new List<PredictiveSuggestionDto>(),
                 source: "error",
                 warningMessage: $"Service error: {ex.Message}"
             );
@@ -238,7 +252,7 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
             if (!root.TryGetProperty("Suggestions", out var suggestionsElement))
                 return null;
 
-            var suggestions = new List<PredictiveSuggestion>();
+            var suggestions = new List<PredictiveSuggestionDto>();
             
             // Parse ALL suggestions from the array
             foreach (var suggestionElement in suggestionsElement.EnumerateArray())
@@ -246,7 +260,7 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
                 var suggestionText = suggestionElement.GetString();
                 if (!string.IsNullOrEmpty(suggestionText))
                 {
-                    suggestions.Add(new PredictiveSuggestion(suggestionText));
+                    suggestions.Add(new PredictiveSuggestionDto(suggestionText));
                 }
             }
 

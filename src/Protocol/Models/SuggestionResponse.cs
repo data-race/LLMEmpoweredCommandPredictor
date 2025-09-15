@@ -11,9 +11,9 @@ namespace LLMEmpoweredCommandPredictor.Protocol.Models;
 public class SuggestionResponse
 {
     /// <summary>
-    /// List of generated suggestions
+    /// List of generated suggestions (serializable DTO)
     /// </summary>
-    public IReadOnlyList<PredictiveSuggestion> Suggestions { get; set; } = new List<PredictiveSuggestion>();
+    public IReadOnlyList<PredictiveSuggestionDto> Suggestions { get; set; } = new List<PredictiveSuggestionDto>();
 
     /// <summary>
     /// Source of suggestions (e.g., "cache", "llm", "fallback")
@@ -74,7 +74,7 @@ public class SuggestionResponse
     /// Creates a new suggestion response with custom values
     /// </summary>
     public SuggestionResponse(
-        IReadOnlyList<PredictiveSuggestion> suggestions,
+        IReadOnlyList<PredictiveSuggestionDto> suggestions,
         string source = "unknown",
         double confidenceScore = 1.0,
         string? warningMessage = null,
@@ -85,7 +85,7 @@ public class SuggestionResponse
         double cacheHitRate = 0.0,
         string? requestCorrelationId = null)
     {
-        Suggestions = suggestions ?? new List<PredictiveSuggestion>();
+        Suggestions = suggestions ?? new List<PredictiveSuggestionDto>();
         Source = source ?? "unknown";
         ConfidenceScore = confidenceScore;
         WarningMessage = warningMessage;

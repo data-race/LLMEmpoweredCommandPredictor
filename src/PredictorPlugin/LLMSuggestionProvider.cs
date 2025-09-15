@@ -38,7 +38,9 @@ public class LLMSuggestionProvider : ILLMSuggestionProvider
         
         try
         {
+            System.Console.WriteLine($"[LLMSuggestionProvider] Calling PluginHelper.GetSuggestions for: {context.UserInput}");
             var suggestions = _pluginHelper.GetSuggestions(context, 5, cancellationToken).ToList();
+            System.Console.WriteLine($"[LLMSuggestionProvider] Received {suggestions.Count} suggestions from backend");
             _logger.LogDebug("PowerShell Plugin: Received {Count} suggestions from backend", suggestions.Count);
             
             foreach (var suggestion in suggestions.Take(3)) // Log first 3 suggestions
@@ -50,10 +52,13 @@ public class LLMSuggestionProvider : ILLMSuggestionProvider
         }
         catch (Exception ex)
         {
+            System.Console.WriteLine($"[LLMSuggestionProvider] Exception: {ex.Message}");
+            System.Console.WriteLine($"[LLMSuggestionProvider] Exception type: {ex.GetType().Name}");
             _logger.LogWarning("PowerShell Plugin: Error getting suggestions: {Error}", ex.Message);
             var fallback = new List<PredictiveSuggestion>{
                 new(string.Concat(context.UserInput, " (fallback)"))
             };
+            System.Console.WriteLine($"[LLMSuggestionProvider] Returning {fallback.Count} fallback suggestions");
             _logger.LogDebug("PowerShell Plugin: Returning fallback suggestion");
             return fallback;
         }

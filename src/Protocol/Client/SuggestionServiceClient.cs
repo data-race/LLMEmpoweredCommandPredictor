@@ -94,9 +94,11 @@ public class SuggestionServiceClient : IDisposable
 
         try
         {
+            System.Console.WriteLine("[SuggestionServiceClient] Attempting to connect to pipe: LLMPredictor");
+            
             // Create named pipe client
             var pipe = new NamedPipeClientStream(
-                ".", "LLMEmpoweredCommandPredictor.SuggestionService", 
+                ".", "LLMPredictor", 
                 PipeDirection.InOut, PipeOptions.Asynchronous);
 
             // Connect with timeout
@@ -104,7 +106,9 @@ public class SuggestionServiceClient : IDisposable
             using var combinedCts = CancellationTokenSource.CreateLinkedTokenSource(
                 connectCts.Token, cancellationToken);
 
+            System.Console.WriteLine($"[SuggestionServiceClient] Connecting with timeout: {_settings.ConnectionTimeoutMs}ms");
             await pipe.ConnectAsync(combinedCts.Token);
+            System.Console.WriteLine("[SuggestionServiceClient] Connected successfully!");
 
             // Create JsonRpc and service
             var rpc = new JsonRpc(pipe);
@@ -118,8 +122,10 @@ public class SuggestionServiceClient : IDisposable
 
             return service;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            System.Console.WriteLine($"[SuggestionServiceClient] Connection failed: {ex.Message}");
+            System.Console.WriteLine($"[SuggestionServiceClient] Exception type: {ex.GetType().Name}");
             // Connection failed - return null
             return null;
         }
@@ -134,7 +140,7 @@ public class SuggestionServiceClient : IDisposable
     {
         return new SuggestionResponse
         {
-            Suggestions = new List<PredictiveSuggestion>(),
+            Suggestions = new List<PredictiveSuggestionDto>(),
             Source = "fallback",
             ConfidenceScore = 0.0,
             WarningMessage = warningMessage

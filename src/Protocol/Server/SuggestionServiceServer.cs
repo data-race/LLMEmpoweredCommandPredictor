@@ -32,7 +32,7 @@ public class SuggestionServiceServer : IDisposable
     /// <param name="pipeName">Named pipe name for communication</param>
     public SuggestionServiceServer(
         ISuggestionService service,
-        string pipeName = "LLMEmpoweredCommandPredictor.SuggestionService")
+        string pipeName = "LLMPredictor")
     {
         _service = service ?? throw new ArgumentNullException(nameof(service));
         _pipeName = pipeName ?? throw new ArgumentNullException(nameof(pipeName));

@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using LLMEmpoweredCommandPredictor.Protocol.Contracts;
 using LLMEmpoweredCommandPredictor.Protocol.Models;
 using LLMEmpoweredCommandPredictor.Protocol.Adapters;
+using LLMEmpoweredCommandPredictor.Protocol.Extensions;
 
 namespace LLMEmpoweredCommandPredictor.Protocol.Integration;
 
@@ -39,7 +40,7 @@ public class ServiceBridge : ISuggestionService
         if (request == null)
         {
             return new SuggestionResponse(
-                suggestions: new List<System.Management.Automation.Subsystem.Prediction.PredictiveSuggestion>(),
+                suggestions: new List<PredictiveSuggestionDto>(),
                 source: "error",
                 warningMessage: "Invalid request"
             );
@@ -65,7 +66,7 @@ public class ServiceBridge : ISuggestionService
         catch (OperationCanceledException)
         {
             return new SuggestionResponse(
-                suggestions: new List<System.Management.Automation.Subsystem.Prediction.PredictiveSuggestion>(),
+                suggestions: new List<PredictiveSuggestionDto>(),
                 source: "cancelled",
                 warningMessage: "Request was cancelled"
             );
@@ -73,7 +74,7 @@ public class ServiceBridge : ISuggestionService
         catch (Exception ex)
         {
             return new SuggestionResponse(
-                suggestions: new List<System.Management.Automation.Subsystem.Prediction.PredictiveSuggestion>(),
+                suggestions: new List<PredictiveSuggestionDto>(),
                 source: "error",
                 warningMessage: $"Service error: {ex.Message}"
             );

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using LLMEmpoweredCommandPredictor.Protocol.Models;
+using LLMEmpoweredCommandPredictor.Protocol.Extensions;
 
 namespace LLMEmpoweredCommandPredictor.Protocol.Adapters;
 
@@ -101,7 +102,7 @@ public static class ContextTransformer
         }
         
         return new SuggestionResponse(
-            suggestions: suggestions,
+            suggestions: suggestions.ToDto(),
             source: isFromCache ? "cache" : "llm",
             confidenceScore: 0.8,
             isFromCache: isFromCache,

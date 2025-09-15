@@ -16,7 +16,7 @@ public static class ProtocolFactory
     /// </summary>
     public static ConnectionSettings DefaultSettings => new()
     {
-        TimeoutMs = 15,
+        TimeoutMs = 20,
         ConnectionTimeoutMs = 1000,
         MaxRetries = 3,
         RetryDelayMs = 100,
@@ -54,7 +54,7 @@ public static class ProtocolFactory
     /// </summary>
     public static SuggestionServiceServer CreateServer(ISuggestionService service)
     {
-        return new SuggestionServiceServer(service, "LLMEmpoweredCommandPredictor.SuggestionService");
+        return new SuggestionServiceServer(service, "LLMPredictor");
     }
 
 
