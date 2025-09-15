@@ -6,6 +6,7 @@ using LLMEmpoweredCommandPredictor.PredictorService.Context;
 using LLMEmpoweredCommandPredictor.PredictorService.Configuration;
 using LLMEmpoweredCommandPredictor.Protocol.Integration;
 using LLMEmpoweredCommandPredictor.Protocol.Factory;
+using LLMEmpoweredCommandPredictor.PredictorService.Cache;
 
 namespace LLMEmpoweredCommandPredictor.PredictorService;
 
@@ -42,6 +43,9 @@ public class Program
                 // Register context providers
                 services.AddSingleton<CommandHistoryContextProvider>();
                 services.AddSingleton<SessionHistoryContextProvider>();
+
+                // Cache
+                services.AddSingleton<SimpleMemCache>();
                 
                 // Register context manager and configure it
                 services.AddSingleton<ContextManager>(serviceProvider =>
