@@ -55,16 +55,13 @@ public class SuggestionServiceServer : IDisposable
             return;
         }
 
-        try
-        {
-            _isRunning = true;
-            await StartListeningAsync(cancellationToken);
-        }
-        catch (Exception)
-        {
-            _isRunning = false;
-            throw;
-        }
+        _isRunning = true;
+        
+        // Start listening in the background instead of blocking
+        _ = Task.Run(() => StartListeningAsync(cancellationToken));
+        
+        // Return immediately after starting background task
+        await Task.CompletedTask;
     }
 
     /// <summary>
