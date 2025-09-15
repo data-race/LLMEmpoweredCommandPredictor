@@ -23,7 +23,7 @@ public class InMemoryCache : ICacheService, IDisposable
     // Configuration constants
     private const int MAX_PREFIX_LENGTH = 50;
     private const int MAX_TOTAL_KEYS = 1000;
-    private const int MAX_ENTRIES_PER_KEY = 2; //10;
+    private const int MAX_ENTRIES_PER_KEY = 20; //10;
     private const int MAX_SUGGESTIONS_RETURNED = 5;
     private static readonly TimeSpan DEFAULT_TTL = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan CLEANUP_INTERVAL = TimeSpan.FromMinutes(5);
