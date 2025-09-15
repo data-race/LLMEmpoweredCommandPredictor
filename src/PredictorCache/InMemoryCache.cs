@@ -414,11 +414,11 @@ public class InMemoryCache : ICacheService, IDisposable
                     """{"Suggestions":["git status","git add .","git commit -m \"message\"","git push","git pull"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
                 },
                 {
-                    "git_s",
+                    "git s",
                     """{"Suggestions":["git status","git stash","git show","git switch"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
                 },
                 {
-                    "git_st",
+                    "git st",
                     """{"Suggestions":["git status","git stash","git stash pop"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
                 },
                 // PowerShell Get- commands
@@ -436,7 +436,7 @@ public class InMemoryCache : ICacheService, IDisposable
                     """{"Suggestions":["docker ps","docker images","docker run","docker build","docker stop"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
                 },
                 {
-                    "docker_p",
+                    "docker p",
                     """{"Suggestions":["docker ps","docker ps -a","docker pull"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
                 },
                 // Common PowerShell patterns
