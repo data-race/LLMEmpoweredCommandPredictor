@@ -88,8 +88,12 @@ public class PromptTemplateService
             // Transform the context into the format expected by the prompt template
             var promptContext = new PromptContextData
             {
-                PreviousCommands = context.CommandHistory
-                    .Take(5) // Get last 5 commands
+                GlobalCommandsHistory = context.CommandHistory
+                    .Take(100)
+                    .Select(h => h.Command)
+                    .ToList(), 
+                PreviousCommands = context.SessionHistory
+                    .Take(10) // Get last 20 commands
                     .Select(h => h.Command)
                     .ToList(),
                 CurrentDirectory = context.WorkingDirectory,
@@ -163,6 +167,7 @@ public class PromptTemplateService
 /// </summary>
 public class PromptContextData
 {
+    public List<string> GlobalCommandsHistory { get; set; } = new();
     public List<string> PreviousCommands { get; set; } = new();
     public string CurrentDirectory { get; set; } = string.Empty;
     public List<string> DirectoryContents { get; set; } = new();

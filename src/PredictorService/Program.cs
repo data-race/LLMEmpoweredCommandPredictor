@@ -4,9 +4,8 @@ using Microsoft.Extensions.Logging;
 using LLMEmpoweredCommandPredictor.PredictorService.Services;
 using LLMEmpoweredCommandPredictor.PredictorService.Context;
 using LLMEmpoweredCommandPredictor.PredictorService.Configuration;
-using LLMEmpoweredCommandPredictor.Protocol.Integration;
 using LLMEmpoweredCommandPredictor.Protocol.Factory;
-using LLMEmpoweredCommandPredictor.Protocol.Adapters;
+using LLMEmpoweredCommandPredictor.Protocol.Contracts;
 using LLMEmpoweredCommandPredictor.PredictorCache;
 
 namespace LLMEmpoweredCommandPredictor.PredictorService;
@@ -22,7 +21,6 @@ public class Program
         Console.WriteLine("Starting LLM Empowered Command Predictor Service...");
 
         var host = CreateHostBuilder(args).Build();
-
         try
         {
             await host.RunAsync();
@@ -37,28 +35,29 @@ public class Program
     /// <summary>
     /// Creates and configures the host builder for the background service.
     /// </summary>
-    public static IHostBuilder CreateHostBuilder(string[] args) =>
-        Host.CreateDefaultBuilder(args)
+    public static IHostBuilder CreateHostBuilder(string[] args)
+    {
+        return Host.CreateDefaultBuilder(args)
             .ConfigureServices((hostContext, services) =>
             {
                 // Register context providers
                 services.AddSingleton<CommandHistoryContextProvider>();
                 services.AddSingleton<SessionHistoryContextProvider>();
-                
+
                 // Register context manager and configure it
                 services.AddSingleton<ContextManager>(serviceProvider =>
                 {
                     var logger = serviceProvider.GetRequiredService<ILogger<ContextManager>>();
                     var contextManager = new ContextManager(logger);
-                    
+
                     // Register the global command history provider
                     var historyProvider = serviceProvider.GetRequiredService<CommandHistoryContextProvider>();
                     contextManager.RegisterProvider(historyProvider);
-                    
+
                     // Register the session history provider
                     var sessionHistoryProvider = serviceProvider.GetRequiredService<SessionHistoryContextProvider>();
                     contextManager.RegisterProvider(sessionHistoryProvider);
-                    
+
                     return contextManager;
                 });
 
@@ -105,37 +104,35 @@ public class Program
                 {
                     Console.WriteLine($"Prompt template not found at: {promptConfig.TemplatePath}");
                 }
-                
-                // Register Cache services
-                services.AddSingleton<InMemoryCache>();
-                services.AddSingleton<CacheKeyGenerator>();
-                
-                // Register Protocol server backend
-                services.AddSingleton<IServiceBackend, PredictorServiceBackend>();
-                
-                // Register cache adapter services
-                services.AddSingleton(provider =>
+
+                // Register Cache services with cache-specific file logging
+                services.AddSingleton<InMemoryCache>(provider =>
                 {
+                    var logger = ConsoleLoggerFactory.CreateCacheLogger<InMemoryCache>();
+                    var cache = new InMemoryCache(new CacheConfiguration(), logger);
+                    logger.LogInformation("Cache service registered and initialized");
+                    return cache;
+                });
+                services.AddSingleton<CacheKeyGenerator>(provider =>
+                {
+                    var logger = ConsoleLoggerFactory.CreateCacheLogger<CacheKeyGenerator>();
+                    return new CacheKeyGenerator(logger);
+                });
+
+                // Register PredictorServiceBackend directly as ISuggestionService
+                services.AddSingleton<ISuggestionService>(provider =>
+                {
+                    var logger = ConsoleLoggerFactory.CreateInfoLogger<PredictorServiceBackend>();
+                    var contextManager = provider.GetRequiredService<ContextManager>();
                     var cache = provider.GetRequiredService<InMemoryCache>();
                     var keyGenerator = provider.GetRequiredService<CacheKeyGenerator>();
-                    return new CacheServiceAdapter(cache, keyGenerator);
+                    var azureOpenAI = provider.GetService<AzureOpenAIService>();
+                    var promptTemplate = provider.GetService<PromptTemplateService>();
+                    return new PredictorServiceBackend(logger, contextManager, cache, keyGenerator, azureOpenAI, promptTemplate);
                 });
-                
-                services.AddSingleton(provider =>
-                {
-                    var keyGenerator = provider.GetRequiredService<CacheKeyGenerator>();
-                    var backend = provider.GetRequiredService<IServiceBackend>();
-                    var cache = provider.GetRequiredService<CacheServiceAdapter>();
-                    
-                    return new CachedServiceBridge(backend, cache, new CacheKeyGeneratorAdapter(keyGenerator));
-                });
-                
+
                 services.AddHostedService<ProtocolServerHost>();
-                
-                // Register the background service
                 services.AddHostedService<PredictorBackgroundService>();
-                
-                // Configure logging
                 services.AddLogging(builder =>
                 {
                     builder.AddConsole();
@@ -143,4 +140,5 @@ public class Program
                 });
             })
             .UseConsoleLifetime();
+    }
 }
