@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Protocol\LLMEmpoweredCommandPredictor.Protocol.csproj" />
+    <ProjectReference Include="..\PredictorCache\LLMEmpoweredCommandPredictor.PredictorCache.csproj" />
   </ItemGroup>
 
 </Project>

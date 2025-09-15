@@ -2,25 +2,26 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using LLMEmpoweredCommandPredictor.Protocol.Factory;
 using LLMEmpoweredCommandPredictor.Protocol.Integration;
+using LLMEmpoweredCommandPredictor.Protocol.Contracts;
 
 namespace LLMEmpoweredCommandPredictor.PredictorService.Services;
 
 public class ProtocolServerHost : BackgroundService
 {
     private readonly ILogger<ProtocolServerHost> _logger;
-    private readonly ServiceBridge _serviceBridge;
+    private readonly ISuggestionService _suggestionService;
 
-    public ProtocolServerHost(ILogger<ProtocolServerHost> logger, ServiceBridge serviceBridge)
+    public ProtocolServerHost(ILogger<ProtocolServerHost> logger, ISuggestionService suggestionService)
     {
         _logger = logger;
-        _serviceBridge = serviceBridge;
+        _suggestionService = suggestionService;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.LogInformation("Starting Protocol server");
+        _logger.LogInformation("Starting Protocol server with integrated caching...");
         
-        var server = ProtocolFactory.CreateServer(_serviceBridge);
+        var server = ProtocolFactory.CreateServer(_suggestionService);
         
         try
         {

@@ -11,10 +11,13 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.PowerShell.SDK" Version="7.2.0" />
     <PackageReference Include="YamlDotNet" Version="16.3.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="6.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="6.0.0" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\Protocol\LLMEmpoweredCommandPredictor.Protocol.csproj" />
+    <ProjectReference Include="..\PredictorCache\LLMEmpoweredCommandPredictor.PredictorCache.csproj" />
   </ItemGroup>
 
   <!-- Copy additional files to the output directory -->

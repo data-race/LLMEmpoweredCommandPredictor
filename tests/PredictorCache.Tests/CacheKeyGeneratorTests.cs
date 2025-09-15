@@ -74,9 +74,9 @@ public class CacheKeyGeneratorTests : IDisposable
     }
 
     [Fact]
-    public void GenerateCacheKey_DifferentDirectoryContext_ReturnsDifferentKeys()
+    public void GenerateCacheKey_SameUserInputDifferentDirectories_ReturnsSameKey()
     {
-        // Arrange
+        // Arrange - Same user input, different directories should now return same key
         var gitRequest = new SuggestionRequest
         {
             UserInput = "git",
@@ -93,14 +93,14 @@ public class CacheKeyGeneratorTests : IDisposable
         var gitKey = _keyGenerator.GenerateCacheKey(gitRequest);
         var nodeKey = _keyGenerator.GenerateCacheKey(nodeRequest);
 
-        // Assert
-        Assert.NotEqual(gitKey, nodeKey);
+        // Assert - Should be equal because we only use user input now
+        Assert.Equal(gitKey, nodeKey);
     }
 
     [Fact]
-    public void GenerateCacheKey_GitProject_DetectsGitContext()
+    public void GenerateCacheKey_GitProject_IgnoresDirectoryContext()
     {
-        // Arrange
+        // Arrange - With simplified cache keys, directory context is ignored
         var gitRequest = new SuggestionRequest
         {
             UserInput = "test",
@@ -117,14 +117,14 @@ public class CacheKeyGeneratorTests : IDisposable
         var gitKey = _keyGenerator.GenerateCacheKey(gitRequest);
         var genericKey = _keyGenerator.GenerateCacheKey(genericRequest);
 
-        // Assert
-        Assert.NotEqual(gitKey, genericKey);
+        // Assert - Should be equal because we only use user input now
+        Assert.Equal(gitKey, genericKey);
     }
 
     [Fact]
-    public void GenerateCacheKey_NodeProject_DetectsNodeContext()
+    public void GenerateCacheKey_NodeProject_IgnoresDirectoryContext()
     {
-        // Arrange
+        // Arrange - With simplified cache keys, directory context is ignored
         var nodeRequest = new SuggestionRequest
         {
             UserInput = "npm",
@@ -141,14 +141,14 @@ public class CacheKeyGeneratorTests : IDisposable
         var nodeKey = _keyGenerator.GenerateCacheKey(nodeRequest);
         var genericKey = _keyGenerator.GenerateCacheKey(genericRequest);
 
-        // Assert
-        Assert.NotEqual(nodeKey, genericKey);
+        // Assert - Should be equal because we only use user input now
+        Assert.Equal(nodeKey, genericKey);
     }
 
     [Fact]
-    public void GenerateCacheKey_DotNetProject_DetectsDotNetContext()
+    public void GenerateCacheKey_DotNetProject_IgnoresDirectoryContext()
     {
-        // Arrange
+        // Arrange - With simplified cache keys, directory context is ignored
         var dotnetRequest = new SuggestionRequest
         {
             UserInput = "dotnet",
@@ -165,15 +165,15 @@ public class CacheKeyGeneratorTests : IDisposable
         var dotnetKey = _keyGenerator.GenerateCacheKey(dotnetRequest);
         var genericKey = _keyGenerator.GenerateCacheKey(genericRequest);
 
-        // Assert
-        Assert.NotEqual(dotnetKey, genericKey);
+        // Assert - Should be equal because we only use user input now
+        Assert.Equal(dotnetKey, genericKey);
     }
 
     [Theory]
     [InlineData("")]
     [InlineData(null)]
     [InlineData("   ")]
-    public void GenerateCacheKey_EmptyOrNullInput_HandlesGracefully(string userInput)
+    public void GenerateCacheKey_EmptyOrNullInput_ReturnsEmptyString(string userInput)
     {
         // Arrange
         var request = new SuggestionRequest
@@ -184,7 +184,7 @@ public class CacheKeyGeneratorTests : IDisposable
 
         // Act & Assert
         var key = _keyGenerator.GenerateCacheKey(request);
-        Assert.NotEmpty(key);
+        Assert.Equal(string.Empty, key); // Should return empty string for empty input
     }
 
     [Fact]
@@ -251,12 +251,12 @@ public class CacheKeyGeneratorTests : IDisposable
     }
 
     [Fact]
-    public void GenerateCacheKey_ReturnsValidHashFormat()
+    public void GenerateCacheKey_ReturnsNormalizedUserInput()
     {
         // Arrange
         var request = new SuggestionRequest
         {
-            UserInput = "test command",
+            UserInput = "Test Command",
             WorkingDirectory = _testDirectory
         };
 
@@ -265,12 +265,11 @@ public class CacheKeyGeneratorTests : IDisposable
 
         // Assert
         Assert.NotEmpty(key);
-        Assert.Equal(32, key.Length); // MD5 hash length in hex
-        Assert.Matches(@"^[a-f0-9]+$", key); // Only lowercase hex characters
+        Assert.Equal("test command", key); // Should return normalized user input
     }
 
     [Fact]
-    public void GenerateCacheKey_MultipleProjectTypes_DetectsCorrectly()
+    public void GenerateCacheKey_MultipleProjectTypes_IgnoresDirectoryContext()
     {
         // Arrange - Create a directory with both Git and Node indicators
         var multiProjectDir = Path.Combine(_testDirectory, "MultiProject");
@@ -294,8 +293,8 @@ public class CacheKeyGeneratorTests : IDisposable
         var multiKey = _keyGenerator.GenerateCacheKey(multiRequest);
         var gitKey = _keyGenerator.GenerateCacheKey(gitOnlyRequest);
 
-        // Assert
-        Assert.NotEqual(multiKey, gitKey);
+        // Assert - Should be equal because we only use user input now
+        Assert.Equal(multiKey, gitKey);
     }
 
     [Fact]
