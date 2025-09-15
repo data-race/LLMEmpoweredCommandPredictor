@@ -60,40 +60,28 @@ public class PluginHelper : IDisposable
 
         try
         {
-            Console.WriteLine("[PluginHelper] Starting GetSuggestionsAsync...");
-            
             // 1. Transform Plugin context to Protocol request
-            Console.WriteLine("[PluginHelper] Transforming plugin context...");
             var protocolRequest = ContextTransformer.FromPluginContext(
                 pluginContext, 
                 maxSuggestions);
-            Console.WriteLine($"[PluginHelper] Protocol request created for input: '{protocolRequest.UserInput}'");
 
             // 2. Make IPC call to backend service
-            Console.WriteLine("[PluginHelper] Calling IPC client...");
             var response = await _ipcClient.GetSuggestionsAsync(protocolRequest, cancellationToken);
-            Console.WriteLine($"[PluginHelper] IPC call successful, received {response.Suggestions.Count} suggestions");
 
-            // Log each suggestion for debugging
-            for (int i = 0; i < response.Suggestions.Count; i++)
-            {
-                Console.WriteLine($"[PluginHelper] Response suggestion {i + 1}: '{response.Suggestions[i].SuggestionText}'");
-            }
-
-            // 3. Return suggestions from response (convert IReadOnlyList to IList)
-            var convertedSuggestions = response.Suggestions.ToList();
-            Console.WriteLine($"[PluginHelper] Converted to list, returning {convertedSuggestions.Count} suggestions");
+            // 3. Convert ProtocolSuggestion to PredictiveSuggestion and return
+            var convertedSuggestions = response.Suggestions
+                .Select(ps => new System.Management.Automation.Subsystem.Prediction.PredictiveSuggestion(
+                    ps.SuggestionText,
+                    ps.ToolTip))
+                .ToList();
             return convertedSuggestions;
         }
-        catch (OperationCanceledException ex)
+        catch (OperationCanceledException)
         {
-            Console.WriteLine($"[PluginHelper] IPC call was cancelled/timed out: {ex.Message}");
             return new List<System.Management.Automation.Subsystem.Prediction.PredictiveSuggestion>();
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            Console.WriteLine($"[PluginHelper] IPC call failed: {ex.Message}");
-            Console.WriteLine($"[PluginHelper] Exception type: {ex.GetType().Name}");
             // Return fallback suggestions on error
             return CreateFallbackSuggestions(pluginContext);
         }
@@ -114,9 +102,6 @@ public class PluginHelper : IDisposable
     {
         try
         {
-            Console.WriteLine($"[PluginHelper] GetSuggestions called with timeout: {_connectionSettings.TimeoutMs}ms");
-            var startTime = DateTime.UtcNow;
-            
             // Create timeout token - only use one timeout mechanism
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(_connectionSettings.TimeoutMs));
@@ -126,35 +111,19 @@ public class PluginHelper : IDisposable
 #pragma warning disable VSTHRD002 // Synchronously waiting on tasks or awaiters may cause deadlocks
             // Wait for the task to complete, but rely on the CancellationToken for timeout
             var result = task.GetAwaiter().GetResult();
-            var elapsed = DateTime.UtcNow - startTime;
-            Console.WriteLine($"[PluginHelper] IPC call successful in {elapsed.TotalMilliseconds:F1}ms, got {result.Count} suggestions");
-            
-            // Log each returned suggestion for debugging
-            for (int i = 0; i < result.Count; i++)
-            {
-                Console.WriteLine($"[PluginHelper] Final suggestion {i + 1}: '{result[i].SuggestionText}'");
-            }
-            
             return result;
 #pragma warning restore VSTHRD002
         }
-        catch (TaskCanceledException ex) when (ex.CancellationToken.IsCancellationRequested)
+        catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            Console.WriteLine($"[PluginHelper] GetSuggestions canceled (timeout): {ex.Message}");
             return CreateFallbackSuggestions(pluginContext);
         }
-        catch (OperationCanceledException ex) when (ex.CancellationToken.IsCancellationRequested)
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            Console.WriteLine($"[PluginHelper] GetSuggestions operation canceled (timeout): {ex.Message}");
             return CreateFallbackSuggestions(pluginContext);
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            Console.WriteLine($"[PluginHelper] GetSuggestions failed: {ex.GetType().Name}: {ex.Message}");
-            if (ex.InnerException != null)
-            {
-                Console.WriteLine($"[PluginHelper] Inner exception: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
-            }
             return CreateFallbackSuggestions(pluginContext);
         }
     }    /// <summary>
@@ -301,6 +270,34 @@ public class PluginHelper : IDisposable
         catch
         {
             return default(T);
+        }
+    }
+
+    /// <summary>
+    /// Saves a user command to the backend service for learning purposes.
+    /// This method is called when a command is executed to learn from user patterns.
+    /// </summary>
+    /// <param name="commandLine">The command that was executed</param>
+    /// <param name="success">Whether the command executed successfully</param>
+    /// <returns>Task that completes when command is saved</returns>
+    public async Task SaveCommandAsync(string commandLine, bool success)
+    {
+        if (_isDisposed || string.IsNullOrWhiteSpace(commandLine))
+            return;
+
+        try
+        {
+            Console.WriteLine($"[PluginHelper] Saving command: '{commandLine}' (success: {success})");
+            
+            // Call the backend service to save the command
+            await _ipcClient.SaveCommandAsync(commandLine, success);
+            
+            Console.WriteLine($"[PluginHelper] Command saved successfully: '{commandLine}'");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[PluginHelper] Failed to save command '{commandLine}': {ex.Message}");
+            // Don't rethrow - command saving should not fail the main prediction flow
         }
     }
 

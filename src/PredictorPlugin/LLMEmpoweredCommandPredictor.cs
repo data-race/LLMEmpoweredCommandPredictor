@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Management.Automation;
 using System.Management.Automation.Subsystem;
 using System.Management.Automation.Subsystem.Prediction;
@@ -22,8 +23,6 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
             _guid = new Guid(guid);
             _logger = ConsoleLoggerFactory.CreateDebugLogger<LLMEmpoweredCommandPredictor>();
             _suggestionProvider = new LLMSuggestionProvider();
-            
-            _logger.LogInformation("PowerShell Plugin: LLMEmpoweredCommandPredictor initialized with GUID: {Guid}", guid);
         }
 
         /// <summary>
@@ -51,11 +50,9 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         public SuggestionPackage GetSuggestion(PredictionClient client, PredictionContext context, CancellationToken cancellationToken)
         {
             string input = context.InputAst.Extent.Text;
-            _logger.LogInformation("PowerShell Plugin: GetSuggestion called with input: '{Input}' (client: {Client})", input, client.Name);
             
             if (string.IsNullOrWhiteSpace(input))
             {
-                _logger.LogDebug("PowerShell Plugin: Input is null or empty, returning default");
                 return default;
             }
 
@@ -67,23 +64,13 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
             try
             {
                 var suggestions = this._suggestionProvider.GetSuggestions(suggestionContext, cancellationToken);
-                _logger.LogInformation("PowerShell Plugin: Provider returned {Count} suggestions", suggestions.Count);
                 
                 if (suggestions.Count == 0)
                 {
-                    _logger.LogWarning("PowerShell Plugin: No suggestions received from provider!");
                     return default;
                 }
                 
                 var package = new SuggestionPackage(suggestions);
-                _logger.LogInformation("PowerShell Plugin: Created SuggestionPackage with {Count} suggestions, returning to PowerShell", suggestions.Count);
-                
-                // Log the actual suggestions being returned
-                for (int i = 0; i < Math.Min(suggestions.Count, 3); i++)
-                {
-                    _logger.LogInformation("PowerShell Plugin: Suggestion {Index}: '{Text}'", i + 1, suggestions[i].SuggestionText);
-                }
-                
                 return package;
             }
             catch (Exception ex)
@@ -123,7 +110,11 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         /// <param name="client">Represents the client that initiates the call.</param>
         /// <param name="session">Represents the mini-session where the accepted suggestion came from.</param>
         /// <param name="acceptedSuggestion">The accepted suggestion text.</param>
-        public void OnSuggestionAccepted(PredictionClient client, uint session, string acceptedSuggestion) { }
+        public void OnSuggestionAccepted(PredictionClient client, uint session, string acceptedSuggestion) 
+        {
+            _logger.LogInformation("PowerShell Plugin: Suggestion accepted: '{AcceptedSuggestion}' (session: {Session})", 
+                acceptedSuggestion, session);
+        }
 
         /// <summary>
         /// A command line was accepted to execute.
@@ -131,7 +122,15 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         /// </summary>
         /// <param name="client">Represents the client that initiates the call.</param>
         /// <param name="history">History command lines provided as references for prediction.</param>
-        public void OnCommandLineAccepted(PredictionClient client, IReadOnlyList<string> history) { }
+        public void OnCommandLineAccepted(PredictionClient client, IReadOnlyList<string> history) 
+        {
+            if (history != null && history.Count > 0)
+            {
+                var latestCommand = history[history.Count - 1];
+                _logger.LogInformation("PowerShell Plugin: Command line accepted: '{Command}' (client: {Client})", 
+                    latestCommand, client.Name);
+            }
+        }
 
         /// <summary>
         /// A command line was done execution.
@@ -139,7 +138,28 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         /// <param name="client">Represents the client that initiates the call.</param>
         /// <param name="commandLine">The last accepted command line.</param>
         /// <param name="success">Shows whether the execution was successful.</param>
-        public void OnCommandLineExecuted(PredictionClient client, string commandLine, bool success) { }
+        public void OnCommandLineExecuted(PredictionClient client, string commandLine, bool success) 
+        {
+            _logger.LogInformation("PowerShell Plugin: Command executed: '{Command}' (success: {Success}, client: {Client})", 
+                commandLine, success, client.Name);
+            
+            // Save the executed command to the cache (fire-and-forget)
+            if (!string.IsNullOrWhiteSpace(commandLine))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _suggestionProvider.SaveCommandAsync(commandLine, success);
+                        _logger.LogDebug("PowerShell Plugin: Command saved to cache: '{Command}'", commandLine);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning("PowerShell Plugin: Failed to save command to cache: {Error}", ex.Message);
+                    }
+                });
+            }
+        }
 
         #endregion;
     }

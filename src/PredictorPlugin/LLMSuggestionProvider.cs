@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Management.Automation.Subsystem.Prediction;
 using System;
 using System.Linq;
@@ -22,8 +23,6 @@ public class LLMSuggestionProvider : ILLMSuggestionProvider
         // Create a console logger for the plugin
         _logger = ConsoleLoggerFactory.CreateDebugLogger<LLMSuggestionProvider>();
         _pluginHelper = new PluginHelper();
-        
-        _logger.LogInformation("PowerShell Plugin: LLMSuggestionProvider initialized");
     }
 
     /// <summary>
@@ -34,17 +33,45 @@ public class LLMSuggestionProvider : ILLMSuggestionProvider
     /// <returns>A list of predictive suggestions.</returns>
     public List<PredictiveSuggestion> GetSuggestions(LLMSuggestionContext context, CancellationToken cancellationToken)
     {
-        _logger.LogInformation("PowerShell Plugin Provider: GetSuggestions called for input: '{UserInput}'", context.UserInput);
-        
-        // SIMPLE TEST: Always return test suggestions for ANY input to debug display
-        _logger.LogInformation("PowerShell Plugin Provider: ALWAYS returning test suggestions for debugging");
-        return new List<PredictiveSuggestion>
+        try
         {
-            new("TEST: git status"),
-            new("TEST: git add ."),
-            new("TEST: git commit"),
-            new("TEST: git push"),
-            new("TEST: git pull")
-        };
+            // Get suggestions from the backend service via IPC
+            var suggestions = _pluginHelper.GetSuggestions(context, 5, cancellationToken).ToList();
+            
+            return suggestions;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("PowerShell Plugin Provider: Error getting suggestions from backend: {Error}", ex.Message);
+            _logger.LogDebug("PowerShell Plugin Provider: Exception details: {StackTrace}", ex.StackTrace);
+            
+            // Return empty list if backend fails - no hardcoded fallbacks
+            return new List<PredictiveSuggestion>();
+        }
+    }
+
+    /// <summary>
+    /// Saves a user command to the backend service for learning purposes.
+    /// </summary>
+    /// <param name="commandLine">The command that was executed</param>
+    /// <param name="success">Whether the command executed successfully</param>
+    /// <returns>Task that completes when command is saved</returns>
+    public async Task SaveCommandAsync(string commandLine, bool success)
+    {
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return;
+        }
+
+        try
+        {
+            // Call the backend service to save the command
+            await _pluginHelper.SaveCommandAsync(commandLine, success);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("PowerShell Plugin Provider: Failed to save command '{CommandLine}': {Error}", 
+                commandLine, ex.Message);
+        }
     }
 }
