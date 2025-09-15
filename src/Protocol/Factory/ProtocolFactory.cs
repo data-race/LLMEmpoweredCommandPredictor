@@ -22,7 +22,7 @@ public static class ProtocolFactory
         ConnectionTimeoutMs = 1000,
         MaxRetries = 3,
         RetryDelayMs = 100,
-        EnableDebugLogging = false
+        EnableDebugLogging = true // Enable debug logging to see connection attempts
     };
 
 
@@ -56,7 +56,7 @@ public static class ProtocolFactory
     /// </summary>
     public static SuggestionServiceServer CreateServer(ISuggestionService service)
     {
-        return new SuggestionServiceServer(service, "LLMEmpoweredCommandPredictor");
+        return new SuggestionServiceServer(service, "LLMEmpoweredCommandPredictor.SuggestionService");
     }
 
 

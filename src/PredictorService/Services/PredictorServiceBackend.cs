@@ -119,7 +119,8 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
             {
                 try
                 {
-                    var cachedSuggestionResponse = JsonSerializer.Deserialize<SuggestionResponse>(cachedResponse);
+                    // Try to parse the simplified JSON format
+                    var cachedSuggestionResponse = ParseCachedResponse(cachedResponse);
                     if (cachedSuggestionResponse != null)
                     {
                         // Update cache metadata
@@ -127,7 +128,8 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
                         cachedSuggestionResponse.CachedTimestamp = DateTime.UtcNow;
                         cachedSuggestionResponse.GenerationTimeMs = 1.0; // Very fast cache retrieval
                         
-                        _logger.LogInformation("PredictorServiceBackend: Cache HIT for '{UserInput}', returning cached response", request.UserInput);
+                        _logger.LogInformation("PredictorServiceBackend: Cache HIT for '{UserInput}', returning cached response with {Count} suggestions", 
+                            request.UserInput, cachedSuggestionResponse.Suggestions.Count);
                         return cachedSuggestionResponse;
                     }
                 }
@@ -220,6 +222,61 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
     }
 
     #endregion
+
+    /// <summary>
+    /// Parses the simplified cached JSON format and converts it to SuggestionResponse.
+    /// Returns ALL suggestions from the cached array.
+    /// </summary>
+    private SuggestionResponse? ParseCachedResponse(string cachedJson)
+    {
+        try
+        {
+            // Parse the simplified JSON format: {"Suggestions":["cmd1","cmd2"],"Source":"...","IsFromCache":false,"GenerationTimeMs":1.0}
+            using var document = JsonDocument.Parse(cachedJson);
+            var root = document.RootElement;
+
+            if (!root.TryGetProperty("Suggestions", out var suggestionsElement))
+                return null;
+
+            var suggestions = new List<PredictiveSuggestion>();
+            
+            // Parse ALL suggestions from the array
+            foreach (var suggestionElement in suggestionsElement.EnumerateArray())
+            {
+                var suggestionText = suggestionElement.GetString();
+                if (!string.IsNullOrEmpty(suggestionText))
+                {
+                    suggestions.Add(new PredictiveSuggestion(suggestionText));
+                }
+            }
+
+            // If no valid suggestions found, return null
+            if (suggestions.Count == 0)
+            {
+                _logger.LogWarning("PredictorServiceBackend: No valid suggestions found in cached response");
+                return null;
+            }
+
+            _logger.LogDebug("PredictorServiceBackend: Parsed {Count} suggestions from cache", suggestions.Count);
+
+            // Extract other properties if they exist
+            var source = root.TryGetProperty("Source", out var sourceElement) ? sourceElement.GetString() ?? "cache" : "cache";
+            var generationTimeMs = root.TryGetProperty("GenerationTimeMs", out var timeElement) ? timeElement.GetDouble() : 1.0;
+
+            return new SuggestionResponse(
+                suggestions: suggestions,
+                source: source,
+                generationTimeMs: generationTimeMs,
+                isFromCache: false, // Will be set to true by caller
+                warningMessage: null
+            );
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("PredictorServiceBackend: Error parsing cached response: {Error}", ex.Message);
+            return null;
+        }
+    }
 
     public void Dispose()
     {

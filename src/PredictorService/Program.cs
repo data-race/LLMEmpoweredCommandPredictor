@@ -112,7 +112,12 @@ public class Program
                 {
                     // Use cache-specific file logger
                     var logger = ConsoleLoggerFactory.CreateCacheLogger<InMemoryCache>();
-                    return new InMemoryCache(new CacheConfiguration(), logger);
+                    var cache = new InMemoryCache(new CacheConfiguration(), logger);
+                    
+                    // Force cache initialization by requesting it (this ensures the constructor runs)
+                    logger.LogInformation("Cache service registered and initialized");
+                    
+                    return cache;
                 });
                 services.AddSingleton<CacheKeyGenerator>(provider =>
                 {
@@ -121,8 +126,8 @@ public class Program
                     return new CacheKeyGenerator(logger);
                 });
                 
-                // Register PredictorServiceBackend directly as ISuggestionService
-                services.AddSingleton<ISuggestionService>(provider =>
+                // Register PredictorServiceBackend as IServiceBackend
+                services.AddSingleton<IServiceBackend>(provider =>
                 {
                     // Use shared file logger for backend too
                     var logger = ConsoleLoggerFactory.CreateInfoLogger<PredictorServiceBackend>();
@@ -133,6 +138,16 @@ public class Program
                     var promptTemplate = provider.GetService<PromptTemplateService>();
                     
                     return new PredictorServiceBackend(logger, contextManager, cache, keyGenerator, azureOpenAI, promptTemplate);
+                });
+                
+                // Register CachedServiceBridge as ISuggestionService for IPC
+                services.AddSingleton<ISuggestionService>(provider =>
+                {
+                    var backend = provider.GetRequiredService<IServiceBackend>();
+                    var cache = provider.GetRequiredService<InMemoryCache>();
+                    var keyGenerator = provider.GetRequiredService<CacheKeyGenerator>();
+                    
+                    return new CachedServiceBridge(backend, cache, keyGenerator);
                 });
                 
                 services.AddHostedService<ProtocolServerHost>();
