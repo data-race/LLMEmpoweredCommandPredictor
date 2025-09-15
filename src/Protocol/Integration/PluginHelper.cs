@@ -25,7 +25,7 @@ public class PluginHelper : IDisposable
     /// </summary>
     public PluginHelper() : this(new ConnectionSettings 
     { 
-        TimeoutMs = 2000,             // Increased from 500ms to 2000ms for IPC
+        TimeoutMs = 20,               // PowerShell predictor constraint is 20ms
         ConnectionTimeoutMs = 5000,   // Increased from 2000ms to 5000ms
         EnableDebugLogging = true     // Enable debug logging
     })
