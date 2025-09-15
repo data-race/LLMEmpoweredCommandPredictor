@@ -5,19 +5,25 @@ using System.Management.Automation;
 using System.Management.Automation.Subsystem;
 using System.Management.Automation.Subsystem.Prediction;
 using LLMEmpoweredCommandPredictor;
+using LLMEmpoweredCommandPredictor.PredictorCache;
+using Microsoft.Extensions.Logging;
 
 namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
 {
     public class LLMEmpoweredCommandPredictor : ICommandPredictor
     {
         private readonly Guid _guid;
+        private readonly ILogger<LLMEmpoweredCommandPredictor> _logger;
 
         private ILLMSuggestionProvider _suggestionProvider;
 
         internal LLMEmpoweredCommandPredictor(string guid)
         {
             _guid = new Guid(guid);
+            _logger = ConsoleLoggerFactory.CreateDebugLogger<LLMEmpoweredCommandPredictor>();
             _suggestionProvider = new LLMSuggestionProvider();
+            
+            _logger.LogInformation("PowerShell Plugin: LLMEmpoweredCommandPredictor initialized with GUID: {Guid}", guid);
         }
 
         /// <summary>
@@ -45,8 +51,11 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         public SuggestionPackage GetSuggestion(PredictionClient client, PredictionContext context, CancellationToken cancellationToken)
         {
             string input = context.InputAst.Extent.Text;
+            _logger.LogInformation("PowerShell Plugin: GetSuggestion called with input: '{Input}' (client: {Client})", input, client.Name);
+            
             if (string.IsNullOrWhiteSpace(input))
             {
+                _logger.LogDebug("PowerShell Plugin: Input is null or empty, returning default");
                 return default;
             }
 
@@ -55,7 +64,34 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
                 UserInput = input,
             };
 
-            return new SuggestionPackage(this._suggestionProvider.GetSuggestions(suggestionContext, cancellationToken));
+            try
+            {
+                var suggestions = this._suggestionProvider.GetSuggestions(suggestionContext, cancellationToken);
+                _logger.LogInformation("PowerShell Plugin: Provider returned {Count} suggestions", suggestions.Count);
+                
+                if (suggestions.Count == 0)
+                {
+                    _logger.LogWarning("PowerShell Plugin: No suggestions received from provider!");
+                    return default;
+                }
+                
+                var package = new SuggestionPackage(suggestions);
+                _logger.LogInformation("PowerShell Plugin: Created SuggestionPackage with {Count} suggestions, returning to PowerShell", suggestions.Count);
+                
+                // Log the actual suggestions being returned
+                for (int i = 0; i < Math.Min(suggestions.Count, 3); i++)
+                {
+                    _logger.LogInformation("PowerShell Plugin: Suggestion {Index}: '{Text}'", i + 1, suggestions[i].SuggestionText);
+                }
+                
+                return package;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("PowerShell Plugin: Exception in GetSuggestion: {Error}", ex.Message);
+                _logger.LogError("PowerShell Plugin: Exception StackTrace: {StackTrace}", ex.StackTrace);
+                return default;
+            }
         }
 
         #region "interface methods for processing feedback"

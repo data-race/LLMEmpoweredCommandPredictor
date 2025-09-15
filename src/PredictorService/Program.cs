@@ -110,7 +110,18 @@ public class Program
                 {
                     var logger = ConsoleLoggerFactory.CreateCacheLogger<InMemoryCache>();
                     var cache = new InMemoryCache(new CacheConfiguration(), logger);
-                    logger.LogInformation("Cache service registered and initialized");
+                    
+                    // Initialize cache synchronously to ensure it's ready before service starts
+                    try
+                    {
+                        cache.EnsureInitializedAsync().Wait();
+                        logger.LogInformation("Cache service registered and initialized synchronously");
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.LogError(ex, "Failed to initialize cache during service startup");
+                    }
+                    
                     return cache;
                 });
                 services.AddSingleton<CacheKeyGenerator>(provider =>

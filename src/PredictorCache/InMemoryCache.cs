@@ -393,6 +393,22 @@ public class InMemoryCache : ICacheService, IDisposable
         GC.SuppressFinalize(this);
     }
     
+    /// <summary>
+    /// Ensures cache is initialized with basic commands. Can be called multiple times safely.
+    /// </summary>
+    public async Task EnsureInitializedAsync()
+    {
+        // Simple flag to prevent multiple initializations
+        if (cache.Count > 0)
+        {
+            logger?.LogDebug("PredictorCache: Cache already initialized, skipping");
+            return;
+        }
+
+        await InitializeCacheWithBasicCommandsAsync();
+        logger?.LogInformation("PredictorCache: Cache initialization completed via EnsureInitializedAsync");
+    }
+
     /// ----------------------------- TO BE DELETED WHEN SETASYNC IS PROPERLY CALLED -----------------------------
     /// <summary>
     /// Pre-populates the cache with basic PowerShell commands using prefix-based keys.
@@ -408,18 +424,39 @@ public class InMemoryCache : ICacheService, IDisposable
             // Define basic command patterns and their suggestions (as simple JSON without PredictiveSuggestion objects)
             var basicCommands = new Dictionary<string, string>
             {
-                // Git commands
+                // Git commands - main suggestions
                 {
                     "git",
                     """{"Suggestions":["git status","git add .","git commit -m \"message\"","git push","git pull"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
                 },
                 {
-                    "git_s",
-                    """{"Suggestions":["git status","git stash","git show","git switch"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
+                    "git ",
+                    """{"Suggestions":["git status","git add .","git commit -m \"message\"","git push","git pull"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
+                },
+                // Git specific commands
+                {
+                    "git status",
+                    """{"Suggestions":["git status","git status --short","git status --porcelain"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
                 },
                 {
-                    "git_st",
-                    """{"Suggestions":["git status","git stash","git stash pop"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
+                    "git add",
+                    """{"Suggestions":["git add .","git add -A","git add -u","git add <file>"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
+                },
+                {
+                    "git commit",
+                    """{"Suggestions":["git commit -m \"message\"","git commit -am \"message\"","git commit --amend"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
+                },
+                {
+                    "git push",
+                    """{"Suggestions":["git push","git push origin main","git push -u origin main","git push --force-with-lease"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
+                },
+                {
+                    "git pull",
+                    """{"Suggestions":["git pull","git pull origin main","git pull --rebase"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
+                },
+                {
+                    "git branch",
+                    """{"Suggestions":["git branch","git branch -a","git branch -r","git branch <new-branch>"],"Source":"initialization","IsFromCache":false,"GenerationTimeMs":1.0}"""
                 },
                 // PowerShell Get- commands
                 {

@@ -34,28 +34,17 @@ public class LLMSuggestionProvider : ILLMSuggestionProvider
     /// <returns>A list of predictive suggestions.</returns>
     public List<PredictiveSuggestion> GetSuggestions(LLMSuggestionContext context, CancellationToken cancellationToken)
     {
-        _logger.LogDebug("PowerShell Plugin: GetSuggestions called for input: {UserInput}", context.UserInput);
+        _logger.LogInformation("PowerShell Plugin Provider: GetSuggestions called for input: '{UserInput}'", context.UserInput);
         
-        try
+        // SIMPLE TEST: Always return test suggestions for ANY input to debug display
+        _logger.LogInformation("PowerShell Plugin Provider: ALWAYS returning test suggestions for debugging");
+        return new List<PredictiveSuggestion>
         {
-            var suggestions = _pluginHelper.GetSuggestions(context, 5, cancellationToken).ToList();
-            _logger.LogDebug("PowerShell Plugin: Received {Count} suggestions from backend", suggestions.Count);
-            
-            foreach (var suggestion in suggestions.Take(3)) // Log first 3 suggestions
-            {
-                _logger.LogDebug("PowerShell Plugin: Suggestion: {SuggestionText}", suggestion.SuggestionText);
-            }
-            
-            return suggestions;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning("PowerShell Plugin: Error getting suggestions: {Error}", ex.Message);
-            var fallback = new List<PredictiveSuggestion>{
-                new(string.Concat(context.UserInput, " (fallback)"))
-            };
-            _logger.LogDebug("PowerShell Plugin: Returning fallback suggestion");
-            return fallback;
-        }
+            new("TEST: git status"),
+            new("TEST: git add ."),
+            new("TEST: git commit"),
+            new("TEST: git push"),
+            new("TEST: git pull")
+        };
     }
 }

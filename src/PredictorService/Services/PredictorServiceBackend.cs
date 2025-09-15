@@ -130,6 +130,14 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
                         
                         _logger.LogInformation("PredictorServiceBackend: Cache HIT for '{UserInput}', returning cached response with {Count} suggestions", 
                             request.UserInput, cachedSuggestionResponse.Suggestions.Count);
+                        
+                        // Log each suggestion for debugging
+                        for (int i = 0; i < cachedSuggestionResponse.Suggestions.Count; i++)
+                        {
+                            _logger.LogInformation("PredictorServiceBackend: Suggestion {Index}: '{SuggestionText}'", 
+                                i + 1, cachedSuggestionResponse.Suggestions[i].SuggestionText);
+                        }
+                        
                         return cachedSuggestionResponse;
                     }
                 }
