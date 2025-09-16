@@ -219,6 +219,56 @@ public class ServiceBridge : ISuggestionService
         }
     }
 
+    /// <inheritdoc />
+    public async Task<CommandValidationResponse> ValidateCommandAsync(string commandLine, CancellationToken cancellationToken = default)
+    {
+        if (_isDisposed)
+        {
+            return new CommandValidationResponse
+            {
+                IsValid = false,
+                ValidationLevel = ValidationLevel.Error,
+                Message = "Service bridge is disposed"
+            };
+        }
+
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return new CommandValidationResponse
+            {
+                IsValid = false,
+                ValidationLevel = ValidationLevel.Error,
+                Message = "Command cannot be empty"
+            };
+        }
+
+        try
+        {
+            // Check if backend has validation support by checking if it's ISuggestionService
+            if (_backend is ISuggestionService suggestionService)
+            {
+                return await suggestionService.ValidateCommandAsync(commandLine, cancellationToken);
+            }
+
+            // Fallback: basic validation without backend support
+            return new CommandValidationResponse
+            {
+                IsValid = true,
+                ValidationLevel = ValidationLevel.Info,
+                Message = "Command format appears valid (backend validation not available)"
+            };
+        }
+        catch (Exception ex)
+        {
+            return new CommandValidationResponse
+            {
+                IsValid = false,
+                ValidationLevel = ValidationLevel.Error,
+                Message = $"Validation error: {ex.Message}"
+            };
+        }
+    }
+
     /// <summary>
     /// Disposes the service bridge
     /// </summary>

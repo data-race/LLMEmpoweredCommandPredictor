@@ -84,4 +84,13 @@ public interface ISuggestionService
     /// <param name="cancellationToken">Cancellation token for the operation</param>
     /// <returns>Task that completes when command is saved to cache</returns>
     Task SaveCommandAsync(string commandLine, bool success, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Validates a command and provides feedback about correctness, syntax, and safety.
+    /// This method checks command syntax, parameter validity, and potential issues.
+    /// </summary>
+    /// <param name="commandLine">The command to validate</param>
+    /// <param name="cancellationToken">Cancellation token for the operation</param>
+    /// <returns>Task that completes with validation result and feedback</returns>
+    Task<CommandValidationResponse> ValidateCommandAsync(string commandLine, CancellationToken cancellationToken = default);
 }

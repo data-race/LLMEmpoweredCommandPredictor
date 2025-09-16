@@ -89,7 +89,7 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         /// <param name="client">Represents the client that initiates the call.</param>
         /// <param name="feedback">A specific type of feedback.</param>
         /// <returns>True or false, to indicate whether the specific feedback is accepted.</returns>
-        public bool CanAcceptFeedback(PredictionClient client, PredictorFeedbackKind feedback) => false;
+        public bool CanAcceptFeedback(PredictionClient client, PredictorFeedbackKind feedback) => true;
 
         /// <summary>
         /// One or more suggestions provided by the predictor were displayed to the user.
@@ -102,7 +102,20 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         /// less than or equal to 0, it means a single suggestion from the list got displayed, and
         /// the index is the absolute value.
         /// </param>
-        public void OnSuggestionDisplayed(PredictionClient client, uint session, int countOrIndex) { }
+        public void OnSuggestionDisplayed(PredictionClient client, uint session, int countOrIndex) 
+        {
+            if (countOrIndex > 0)
+            {
+                _logger.LogDebug("PowerShell Plugin: {Count} suggestions displayed (session: {Session})", 
+                    countOrIndex, session);
+            }
+            else if (countOrIndex <= 0)
+            {
+                var index = Math.Abs(countOrIndex);
+                _logger.LogDebug("PowerShell Plugin: Suggestion at index {Index} displayed (session: {Session})", 
+                    index, session);
+            }
+        }
 
         /// <summary>
         /// The suggestion provided by the predictor was accepted.
@@ -114,6 +127,24 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         {
             _logger.LogInformation("PowerShell Plugin: Suggestion accepted: '{AcceptedSuggestion}' (session: {Session})", 
                 acceptedSuggestion, session);
+            
+            // Save the accepted suggestion to cache to reinforce successful predictions
+            if (!string.IsNullOrWhiteSpace(acceptedSuggestion))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        // Save accepted suggestion with success=true to reinforce good predictions
+                        await _suggestionProvider.SaveCommandAsync(acceptedSuggestion, success: true);
+                        _logger.LogDebug("PowerShell Plugin: Accepted suggestion saved to cache: '{Suggestion}'", acceptedSuggestion);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning("PowerShell Plugin: Failed to save accepted suggestion to cache: {Error}", ex.Message);
+                    }
+                });
+            }
         }
 
         /// <summary>
@@ -129,6 +160,25 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
                 var latestCommand = history[history.Count - 1];
                 _logger.LogInformation("PowerShell Plugin: Command line accepted: '{Command}' (client: {Client})", 
                     latestCommand, client.Name);
+                
+                // Save the accepted command to the cache immediately (fire-and-forget)
+                // This is more reliable than OnCommandLineExecuted as it's called immediately when user hits Enter
+                if (!string.IsNullOrWhiteSpace(latestCommand))
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            // Assume success=true for accepted commands, as they haven't executed yet
+                            await _suggestionProvider.SaveCommandAsync(latestCommand, success: true);
+                            _logger.LogDebug("PowerShell Plugin: Accepted command saved to cache: '{Command}'", latestCommand);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning("PowerShell Plugin: Failed to save accepted command to cache: {Error}", ex.Message);
+                        }
+                    });
+                }
             }
         }
 

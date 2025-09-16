@@ -60,10 +60,6 @@ public class InMemoryCache : ICacheService, IDisposable
         startTime = DateTime.UtcNow;
         lastAccessTime = startTime;
 
-        // Pre-populate cache with basic commands during initialization
-        // NEED TO BE DELETED, ONLY FOR TESTING
-        _ = Task.Run(async () => await InitializeCacheWithBasicCommandsAsync());
-
         // Start background cleanup timer if enabled
         if (this.config.EnableBackgroundCleanup)
         {

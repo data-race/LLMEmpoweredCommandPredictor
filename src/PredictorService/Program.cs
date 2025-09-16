@@ -117,6 +117,11 @@ public class Program
                     var logger = new ConsoleLogger<CacheKeyGenerator>(LogLevel.Debug, "LLMCommandPredictor_Cache.log");
                     return new CacheKeyGenerator(logger);
                 });
+                services.AddSingleton<CommandValidationService>(provider =>
+                {
+                    var logger = new ConsoleLogger<CommandValidationService>(LogLevel.Debug, "LLMCommandPredictor_Validation.log");
+                    return new CommandValidationService(logger);
+                });
 
                 // Register PredictorServiceBackend directly as ISuggestionService for IPC
                 // This creates the correct architecture: IPC -> PredictorServiceBackend -> Cache
@@ -127,9 +132,10 @@ public class Program
                     var contextManager = provider.GetRequiredService<ContextManager>();
                     var cache = provider.GetRequiredService<InMemoryCache>();
                     var keyGenerator = provider.GetRequiredService<CacheKeyGenerator>();
+                    var validationService = provider.GetRequiredService<CommandValidationService>();
                     var azureOpenAI = provider.GetService<AzureOpenAIService>();
                     var promptTemplate = provider.GetService<PromptTemplateService>();
-                    return new PredictorServiceBackend(logger, contextManager, cache, keyGenerator, azureOpenAI, promptTemplate);
+                    return new PredictorServiceBackend(logger, contextManager, cache, keyGenerator, validationService, azureOpenAI, promptTemplate);
                 });
 
                 services.AddHostedService<ProtocolServerHost>();
