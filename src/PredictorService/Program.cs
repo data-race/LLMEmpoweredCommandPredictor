@@ -65,8 +65,8 @@ public class Program
                 var azureOpenAIConfig = new AzureOpenAIConfiguration
                 {
                     Endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? "https://yongyu-chatgpt-test1.openai.azure.com/",
-                    DeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gtp-4.1",
-                    ApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? string.Empty
+                    DeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4.1",
+                    ApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? "c961a6ea9de24724b09ed800a204f59c"
                 };
 
                 // Configure prompt template settings
