@@ -20,7 +20,6 @@ public class ProtocolServerHost : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _logger.LogInformation("Starting Protocol server with integrated caching...");
-        
         var server = ProtocolFactory.CreateServer(_suggestionService);
         
         try

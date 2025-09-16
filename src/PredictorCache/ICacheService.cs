@@ -26,7 +26,7 @@ public interface ICacheService
     /// <param name="cacheKey">The cache key to store under</param>
     /// <param name="response">The response to cache</param>
     /// <param name="cancellationToken">Cancellation token</param>
-    Task SetAsync(string command, CancellationToken cancellationToken = default);
+    Task SetAsync(string cacheKey, string response, CancellationToken cancellationToken = default);
 
     /// <summary>
     /// Removes a specific cache entry.

@@ -1,22 +1,27 @@
 using System;
 using System.Collections.Generic;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Management.Automation;
 using System.Management.Automation.Subsystem;
 using System.Management.Automation.Subsystem.Prediction;
 using LLMEmpoweredCommandPredictor;
+using LLMEmpoweredCommandPredictor.PredictorCache;
+using Microsoft.Extensions.Logging;
 
 namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
 {
     public class LLMEmpoweredCommandPredictor : ICommandPredictor
     {
         private readonly Guid _guid;
+        private readonly ILogger<LLMEmpoweredCommandPredictor> _logger;
 
         private ILLMSuggestionProvider _suggestionProvider;
 
         internal LLMEmpoweredCommandPredictor(string guid)
         {
             _guid = new Guid(guid);
+            _logger = new ConsoleLogger<LLMEmpoweredCommandPredictor>(LogLevel.Critical, "LLMCommandPredictor_Plugin.log");
             _suggestionProvider = new LLMSuggestionProvider();
         }
 
@@ -45,6 +50,7 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         public SuggestionPackage GetSuggestion(PredictionClient client, PredictionContext context, CancellationToken cancellationToken)
         {
             string input = context.InputAst.Extent.Text;
+            
             if (string.IsNullOrWhiteSpace(input))
             {
                 return default;
@@ -55,7 +61,24 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
                 UserInput = input,
             };
 
-            return new SuggestionPackage(this._suggestionProvider.GetSuggestions(suggestionContext, cancellationToken));
+            try
+            {
+                var suggestions = this._suggestionProvider.GetSuggestions(suggestionContext, cancellationToken);
+                
+                if (suggestions.Count == 0)
+                {
+                    return default;
+                }
+                
+                var package = new SuggestionPackage(suggestions);
+                return package;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError("PowerShell Plugin: Exception in GetSuggestion: {Error}", ex.Message);
+                _logger.LogError("PowerShell Plugin: Exception StackTrace: {StackTrace}", ex.StackTrace);
+                return default;
+            }
         }
 
         #region "interface methods for processing feedback"
@@ -66,7 +89,7 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         /// <param name="client">Represents the client that initiates the call.</param>
         /// <param name="feedback">A specific type of feedback.</param>
         /// <returns>True or false, to indicate whether the specific feedback is accepted.</returns>
-        public bool CanAcceptFeedback(PredictionClient client, PredictorFeedbackKind feedback) => false;
+        public bool CanAcceptFeedback(PredictionClient client, PredictorFeedbackKind feedback) => true;
 
         /// <summary>
         /// One or more suggestions provided by the predictor were displayed to the user.
@@ -79,7 +102,20 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         /// less than or equal to 0, it means a single suggestion from the list got displayed, and
         /// the index is the absolute value.
         /// </param>
-        public void OnSuggestionDisplayed(PredictionClient client, uint session, int countOrIndex) { }
+        public void OnSuggestionDisplayed(PredictionClient client, uint session, int countOrIndex) 
+        {
+            if (countOrIndex > 0)
+            {
+                _logger.LogDebug("PowerShell Plugin: {Count} suggestions displayed (session: {Session})", 
+                    countOrIndex, session);
+            }
+            else if (countOrIndex <= 0)
+            {
+                var index = Math.Abs(countOrIndex);
+                _logger.LogDebug("PowerShell Plugin: Suggestion at index {Index} displayed (session: {Session})", 
+                    index, session);
+            }
+        }
 
         /// <summary>
         /// The suggestion provided by the predictor was accepted.
@@ -87,7 +123,26 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         /// <param name="client">Represents the client that initiates the call.</param>
         /// <param name="session">Represents the mini-session where the accepted suggestion came from.</param>
         /// <param name="acceptedSuggestion">The accepted suggestion text.</param>
-        public void OnSuggestionAccepted(PredictionClient client, uint session, string acceptedSuggestion) { }
+        public void OnSuggestionAccepted(PredictionClient client, uint session, string acceptedSuggestion) 
+        {
+            // Save the accepted suggestion to cache to reinforce successful predictions
+            if (!string.IsNullOrWhiteSpace(acceptedSuggestion))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        // Save accepted suggestion with success=true to reinforce good predictions
+                        await _suggestionProvider.SaveCommandAsync(acceptedSuggestion, success: true);
+                        _logger.LogDebug("PowerShell Plugin: Accepted suggestion saved to cache: '{Suggestion}'", acceptedSuggestion);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning("PowerShell Plugin: Failed to save accepted suggestion to cache: {Error}", ex.Message);
+                    }
+                });
+            }
+        }
 
         /// <summary>
         /// A command line was accepted to execute.
@@ -95,7 +150,32 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         /// </summary>
         /// <param name="client">Represents the client that initiates the call.</param>
         /// <param name="history">History command lines provided as references for prediction.</param>
-        public void OnCommandLineAccepted(PredictionClient client, IReadOnlyList<string> history) { }
+        public void OnCommandLineAccepted(PredictionClient client, IReadOnlyList<string> history) 
+        {
+            if (history != null && history.Count > 0)
+            {
+                var latestCommand = history[history.Count - 1];
+                
+                // Save the accepted command to the cache immediately (fire-and-forget)
+                // This is more reliable than OnCommandLineExecuted as it's called immediately when user hits Enter
+                if (!string.IsNullOrWhiteSpace(latestCommand))
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try
+                        {
+                            // Assume success=true for accepted commands, as they haven't executed yet
+                            await _suggestionProvider.SaveCommandAsync(latestCommand, success: true);
+                            _logger.LogDebug("PowerShell Plugin: Accepted command saved to cache: '{Command}'", latestCommand);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning("PowerShell Plugin: Failed to save accepted command to cache: {Error}", ex.Message);
+                        }
+                    });
+                }
+            }
+        }
 
         /// <summary>
         /// A command line was done execution.
@@ -103,7 +183,25 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         /// <param name="client">Represents the client that initiates the call.</param>
         /// <param name="commandLine">The last accepted command line.</param>
         /// <param name="success">Shows whether the execution was successful.</param>
-        public void OnCommandLineExecuted(PredictionClient client, string commandLine, bool success) { }
+        public void OnCommandLineExecuted(PredictionClient client, string commandLine, bool success) 
+        {
+            // Save the executed command to the cache (fire-and-forget)
+            if (!string.IsNullOrWhiteSpace(commandLine))
+            {
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await _suggestionProvider.SaveCommandAsync(commandLine, success);
+                        _logger.LogDebug("PowerShell Plugin: Command saved to cache: '{Command}'", commandLine);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning("PowerShell Plugin: Failed to save command to cache: {Error}", ex.Message);
+                    }
+                });
+            }
+        }
 
         #endregion;
     }

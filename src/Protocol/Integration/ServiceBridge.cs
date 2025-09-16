@@ -39,7 +39,7 @@ public class ServiceBridge : ISuggestionService
         if (request == null)
         {
             return new SuggestionResponse(
-                suggestions: new List<System.Management.Automation.Subsystem.Prediction.PredictiveSuggestion>(),
+                suggestions: new List<ProtocolSuggestion>(),
                 source: "error",
                 warningMessage: "Invalid request"
             );
@@ -65,7 +65,7 @@ public class ServiceBridge : ISuggestionService
         catch (OperationCanceledException)
         {
             return new SuggestionResponse(
-                suggestions: new List<System.Management.Automation.Subsystem.Prediction.PredictiveSuggestion>(),
+                suggestions: new List<ProtocolSuggestion>(),
                 source: "cancelled",
                 warningMessage: "Request was cancelled"
             );
@@ -73,7 +73,7 @@ public class ServiceBridge : ISuggestionService
         catch (Exception ex)
         {
             return new SuggestionResponse(
-                suggestions: new List<System.Management.Automation.Subsystem.Prediction.PredictiveSuggestion>(),
+                suggestions: new List<ProtocolSuggestion>(),
                 source: "error",
                 warningMessage: $"Service error: {ex.Message}"
             );
@@ -198,6 +198,74 @@ public class ServiceBridge : ISuggestionService
         catch
         {
             return default(T);
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task SaveCommandAsync(string commandLine, bool success, CancellationToken cancellationToken = default)
+    {
+        if (_isDisposed || string.IsNullOrWhiteSpace(commandLine))
+            return;
+
+        try
+        {
+            // For now, ServiceBridge doesn't have a backend method for saving commands
+            // This would need to be implemented when the backend supports command learning
+            await Task.CompletedTask;
+        }
+        catch (Exception)
+        {
+            // Log error but don't throw - this is a background operation
+        }
+    }
+
+    /// <inheritdoc />
+    public async Task<CommandValidationResponse> ValidateCommandAsync(string commandLine, CancellationToken cancellationToken = default)
+    {
+        if (_isDisposed)
+        {
+            return new CommandValidationResponse
+            {
+                IsValid = false,
+                ValidationLevel = ValidationLevel.Error,
+                Message = "Service bridge is disposed"
+            };
+        }
+
+        if (string.IsNullOrWhiteSpace(commandLine))
+        {
+            return new CommandValidationResponse
+            {
+                IsValid = false,
+                ValidationLevel = ValidationLevel.Error,
+                Message = "Command cannot be empty"
+            };
+        }
+
+        try
+        {
+            // Check if backend has validation support by checking if it's ISuggestionService
+            if (_backend is ISuggestionService suggestionService)
+            {
+                return await suggestionService.ValidateCommandAsync(commandLine, cancellationToken);
+            }
+
+            // Fallback: basic validation without backend support
+            return new CommandValidationResponse
+            {
+                IsValid = true,
+                ValidationLevel = ValidationLevel.Info,
+                Message = "Command format appears valid (backend validation not available)"
+            };
+        }
+        catch (Exception ex)
+        {
+            return new CommandValidationResponse
+            {
+                IsValid = false,
+                ValidationLevel = ValidationLevel.Error,
+                Message = $"Validation error: {ex.Message}"
+            };
         }
     }
 

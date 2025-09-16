@@ -21,7 +21,6 @@ public class Program
         Console.WriteLine("Starting LLM Empowered Command Predictor Service...");
 
         var host = CreateHostBuilder(args).Build();
-
         try
         {
             await host.RunAsync();
@@ -36,28 +35,29 @@ public class Program
     /// <summary>
     /// Creates and configures the host builder for the background service.
     /// </summary>
-    public static IHostBuilder CreateHostBuilder(string[] args) =>
-        Host.CreateDefaultBuilder(args)
+    public static IHostBuilder CreateHostBuilder(string[] args)
+    {
+        return Host.CreateDefaultBuilder(args)
             .ConfigureServices((hostContext, services) =>
             {
                 // Register context providers
                 services.AddSingleton<CommandHistoryContextProvider>();
                 services.AddSingleton<SessionHistoryContextProvider>();
-                
+
                 // Register context manager and configure it
                 services.AddSingleton<ContextManager>(serviceProvider =>
                 {
                     var logger = serviceProvider.GetRequiredService<ILogger<ContextManager>>();
                     var contextManager = new ContextManager(logger);
-                    
+
                     // Register the global command history provider
                     var historyProvider = serviceProvider.GetRequiredService<CommandHistoryContextProvider>();
                     contextManager.RegisterProvider(historyProvider);
-                    
+
                     // Register the session history provider
                     var sessionHistoryProvider = serviceProvider.GetRequiredService<SessionHistoryContextProvider>();
                     contextManager.RegisterProvider(sessionHistoryProvider);
-                    
+
                     return contextManager;
                 });
 
@@ -65,8 +65,8 @@ public class Program
                 var azureOpenAIConfig = new AzureOpenAIConfiguration
                 {
                     Endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? "https://yongyu-chatgpt-test1.openai.azure.com/",
-                    DeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gtp-4.1",
-                    ApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? string.Empty
+                    DeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4.1",
+                    ApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? "c961a6ea9de24724b09ed800a204f59c"
                 };
 
                 // Configure prompt template settings
@@ -104,47 +104,42 @@ public class Program
                 {
                     Console.WriteLine($"Prompt template not found at: {promptConfig.TemplatePath}");
                 }
-                
-                // Register Cache services with cache-specific file logging
+
+                // Register Cache services
                 services.AddSingleton<InMemoryCache>(provider =>
                 {
-                    // Use cache-specific file logger
-                    var logger = ConsoleLoggerFactory.CreateCacheLogger<InMemoryCache>();
-                    var cache = new InMemoryCache(new CacheConfiguration(), logger);
-                    
-                    // Force cache initialization by requesting it (this ensures the constructor runs)
-                    logger.LogInformation("Cache service registered and initialized");
-                    
+                    var cache = new InMemoryCache(new CacheConfiguration());
+                    Console.WriteLine("Cache service registered successfully");
                     return cache;
                 });
                 services.AddSingleton<CacheKeyGenerator>(provider =>
                 {
-                    // Use cache-specific file logger
-                    var logger = ConsoleLoggerFactory.CreateCacheLogger<CacheKeyGenerator>();
+                    var logger = new ConsoleLogger<CacheKeyGenerator>(LogLevel.Debug, "LLMCommandPredictor_Cache.log");
                     return new CacheKeyGenerator(logger);
                 });
-                
+                services.AddSingleton<CommandValidationService>(provider =>
+                {
+                    var logger = new ConsoleLogger<CommandValidationService>(LogLevel.Debug, "LLMCommandPredictor_Validation.log");
+                    return new CommandValidationService(logger);
+                });
+
                 // Register PredictorServiceBackend directly as ISuggestionService for IPC
                 // This creates the correct architecture: IPC -> PredictorServiceBackend -> Cache
                 services.AddSingleton<ISuggestionService>(provider =>
                 {
                     // Use shared file logger for backend
-                    var logger = ConsoleLoggerFactory.CreateInfoLogger<PredictorServiceBackend>();
+                    var logger = new ConsoleLogger<PredictorServiceBackend>(LogLevel.Information);
                     var contextManager = provider.GetRequiredService<ContextManager>();
                     var cache = provider.GetRequiredService<InMemoryCache>();
                     var keyGenerator = provider.GetRequiredService<CacheKeyGenerator>();
+                    var validationService = provider.GetRequiredService<CommandValidationService>();
                     var azureOpenAI = provider.GetService<AzureOpenAIService>();
                     var promptTemplate = provider.GetService<PromptTemplateService>();
-                    
-                    return new PredictorServiceBackend(logger, contextManager, cache, keyGenerator, azureOpenAI, promptTemplate);
+                    return new PredictorServiceBackend(logger, contextManager, cache, keyGenerator, validationService, azureOpenAI, promptTemplate);
                 });
-                
+
                 services.AddHostedService<ProtocolServerHost>();
-                
-                // Register the background service
                 services.AddHostedService<PredictorBackgroundService>();
-                
-                // Configure logging
                 services.AddLogging(builder =>
                 {
                     builder.AddConsole();
@@ -152,4 +147,5 @@ public class Program
                 });
             })
             .UseConsoleLifetime();
+    }
 }

@@ -37,8 +37,10 @@ public class CacheKeyGenerator
         return cacheKey;
     }
 
+
+
     /// <summary>
-    /// Generates multiple cache keys for prefix matching (1 to maxPrefixLength character prefixes)
+    /// Generates multiple cache keys for prefix matching (1-3 character prefixes)
     /// This allows "g" to match cached results for "git branch", "git status", etc.
     /// </summary>
     public List<string> GenerateAllPrefixKeys(SuggestionRequest request)
@@ -49,12 +51,24 @@ public class CacheKeyGenerator
         if (string.IsNullOrEmpty(normalizedInput))
             return keys;
 
-        // Generate prefix keys from 1 character up to maxPrefixLength
-        var maxLength = Math.Min(maxPrefixLength, normalizedInput.Length);
+        // Generate prefix keys for 1, 2, 3 characters
+        var maxLength = Math.Min(3, normalizedInput.Length);
         
         for (int i = 1; i <= maxLength; i++)
         {
-            keys.Add(normalizedInput.Substring(0, i));
+            var prefix = normalizedInput.Substring(0, i);
+            var prefixRequest = new SuggestionRequest(
+                userInput: prefix,
+                workingDirectory: request.WorkingDirectory,
+                maxSuggestions: request.MaxSuggestions,
+                commandHistory: request.CommandHistory,
+                powerShellVersion: request.PowerShellVersion,
+                operatingSystem: request.OperatingSystem,
+                userSessionId: request.UserSessionId,
+                priority: request.Priority
+            );
+            
+            keys.Add(GenerateCacheKey(prefixRequest));
         }
 
         return keys;
@@ -72,11 +86,23 @@ public class CacheKeyGenerator
             return keys;
 
         // Search from longest possible prefix down to single character
-        var maxLength = Math.Min(maxPrefixLength, normalizedInput.Length);
+        var maxLength = Math.Min(3, normalizedInput.Length);
         
         for (int i = maxLength; i >= 1; i--)
         {
-            keys.Add(normalizedInput.Substring(0, i));
+            var prefix = normalizedInput.Substring(0, i);
+            var prefixRequest = new SuggestionRequest(
+                userInput: prefix,
+                workingDirectory: request.WorkingDirectory,
+                maxSuggestions: request.MaxSuggestions,
+                commandHistory: request.CommandHistory,
+                powerShellVersion: request.PowerShellVersion,
+                operatingSystem: request.OperatingSystem,
+                userSessionId: request.UserSessionId,
+                priority: request.Priority
+            );
+            
+            keys.Add(GenerateCacheKey(prefixRequest));
         }
 
         return keys;

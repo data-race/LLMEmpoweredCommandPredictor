@@ -86,18 +86,18 @@ public static class ContextTransformer
         int maxSuggestions = 5, 
         bool isFromCache = false)
     {
-        var suggestions = new List<System.Management.Automation.Subsystem.Prediction.PredictiveSuggestion>();
+        var suggestions = new List<ProtocolSuggestion>();
         
         // Handle different service response formats
         if (serviceResponse is string stringResponse)
         {
             // Parse string response (e.g., from LLM)
-            suggestions = ParseStringToSuggestions(stringResponse, maxSuggestions);
+            suggestions = ParseStringToProtocolSuggestions(stringResponse, maxSuggestions);
         }
         else if (serviceResponse is IEnumerable<object> listResponse)
         {
             // Handle list responses
-            suggestions = ParseListToSuggestions(listResponse, maxSuggestions);
+            suggestions = ParseListToProtocolSuggestions(listResponse, maxSuggestions);
         }
         
         return new SuggestionResponse(
@@ -127,6 +127,58 @@ public static class ContextTransformer
         }
     }
     
+    /// <summary>
+    /// Parses string response to ProtocolSuggestion list
+    /// </summary>
+    private static List<ProtocolSuggestion> ParseStringToProtocolSuggestions(
+        string response, 
+        int maxSuggestions)
+    {
+        var suggestions = new List<ProtocolSuggestion>();
+        
+        if (string.IsNullOrWhiteSpace(response))
+            return suggestions;
+        
+        // Try to parse as JSON first, then fall back to line-by-line parsing
+        try
+        {
+            // Simple line-based parsing for now
+            var lines = response.Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                              .Where(line => !string.IsNullOrWhiteSpace(line.Trim()))
+                              .Take(maxSuggestions);
+            
+            foreach (var line in lines)
+            {
+                var cleanLine = line.Trim().TrimStart('-', '*', '•').Trim();
+                if (!string.IsNullOrWhiteSpace(cleanLine))
+                {
+                    suggestions.Add(new ProtocolSuggestion(cleanLine, "AI-generated suggestion based on context"));
+                }
+            }
+        }
+        catch
+        {
+            // Fallback: create a single suggestion from the entire response
+            suggestions.Add(new ProtocolSuggestion(response.Trim(), "AI-generated suggestion"));
+        }
+        
+        return suggestions;
+    }
+    
+    /// <summary>
+    /// Parses list response to ProtocolSuggestion list
+    /// </summary>
+    private static List<ProtocolSuggestion> ParseListToProtocolSuggestions(
+        IEnumerable<object> response, 
+        int maxSuggestions)
+    {
+        return response.Take(maxSuggestions)
+                      .Select(item => new ProtocolSuggestion(
+                          item.ToString() ?? "Unknown suggestion",
+                          "Generated suggestion"))
+                      .ToList();
+    }
+
     /// <summary>
     /// Parses string response to PredictiveSuggestion list
     /// </summary>

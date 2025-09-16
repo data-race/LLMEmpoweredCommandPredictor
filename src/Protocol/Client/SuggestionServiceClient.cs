@@ -134,7 +134,7 @@ public class SuggestionServiceClient : IDisposable
     {
         return new SuggestionResponse
         {
-            Suggestions = new List<PredictiveSuggestion>(),
+            Suggestions = new List<ProtocolSuggestion>(),
             Source = "fallback",
             ConfidenceScore = 0.0,
             WarningMessage = warningMessage
@@ -162,6 +162,33 @@ public class SuggestionServiceClient : IDisposable
             _pipe.Dispose();
 #pragma warning restore VSTHRD103
             _pipe = null;
+        }
+    }
+
+    /// <summary>
+    /// Saves a user command to the service for learning purposes.
+    /// </summary>
+    /// <param name="commandLine">The command that was executed</param>
+    /// <param name="success">Whether the command executed successfully</param>
+    /// <param name="cancellationToken">Cancellation token</param>
+    /// <returns>Task that completes when command is saved</returns>
+    public async Task SaveCommandAsync(string commandLine, bool success, CancellationToken cancellationToken = default)
+    {
+        try
+        {
+            // Try to get or establish connection
+            var service = await GetServiceAsync(cancellationToken);
+            if (service == null)
+            {
+                return; // Service unavailable, silently ignore
+            }
+
+            // Call the service to save the command
+            await service.SaveCommandAsync(commandLine, success, cancellationToken);
+        }
+        catch (Exception)
+        {
+            // Ignore save errors - they should not affect the main prediction flow
         }
     }
 

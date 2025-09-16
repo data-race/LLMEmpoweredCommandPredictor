@@ -74,4 +74,23 @@ public interface ISuggestionService
     /// <param name="cancellationToken">Cancellation token for the operation</param>
     /// <returns>Task that completes when cache is cleared</returns>
     Task ClearCacheAsync(CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Saves a user command to the cache for future suggestions.
+    /// This method is called when a user executes a command to learn from their patterns.
+    /// </summary>
+    /// <param name="commandLine">The command that was executed</param>
+    /// <param name="success">Whether the command executed successfully</param>
+    /// <param name="cancellationToken">Cancellation token for the operation</param>
+    /// <returns>Task that completes when command is saved to cache</returns>
+    Task SaveCommandAsync(string commandLine, bool success, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Validates a command and provides feedback about correctness, syntax, and safety.
+    /// This method checks command syntax, parameter validity, and potential issues.
+    /// </summary>
+    /// <param name="commandLine">The command to validate</param>
+    /// <param name="cancellationToken">Cancellation token for the operation</param>
+    /// <returns>Task that completes with validation result and feedback</returns>
+    Task<CommandValidationResponse> ValidateCommandAsync(string commandLine, CancellationToken cancellationToken = default);
 }

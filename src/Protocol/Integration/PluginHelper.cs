@@ -23,7 +23,12 @@ public class PluginHelper : IDisposable
     /// <summary>
     /// Creates a new PluginHelper with default connection settings
     /// </summary>
-    public PluginHelper() : this(new ConnectionSettings())
+    public PluginHelper() : this(new ConnectionSettings 
+    { 
+        TimeoutMs = 20,               // PowerShell predictor constraint is 20ms
+        ConnectionTimeoutMs = 5000,   // Increased from 2000ms to 5000ms
+        EnableDebugLogging = true     // Enable debug logging
+    })
     {
     }
 
@@ -63,8 +68,13 @@ public class PluginHelper : IDisposable
             // 2. Make IPC call to backend service
             var response = await _ipcClient.GetSuggestionsAsync(protocolRequest, cancellationToken);
 
-            // 3. Return suggestions from response (convert IReadOnlyList to IList)
-            return response.Suggestions.ToList();
+            // 3. Convert ProtocolSuggestion to PredictiveSuggestion and return
+            var convertedSuggestions = response.Suggestions
+                .Select(ps => new System.Management.Automation.Subsystem.Prediction.PredictiveSuggestion(
+                    ps.SuggestionText,
+                    ps.ToolTip))
+                .ToList();
+            return convertedSuggestions;
         }
         catch (OperationCanceledException)
         {
@@ -92,32 +102,31 @@ public class PluginHelper : IDisposable
     {
         try
         {
-            // Use a short timeout to respect the 20ms constraint
+            // Create timeout token - only use one timeout mechanism
             using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
             timeoutCts.CancelAfter(TimeSpan.FromMilliseconds(_connectionSettings.TimeoutMs));
 
             var task = GetSuggestionsAsync(pluginContext, maxSuggestions, timeoutCts.Token);
             
-            #pragma warning disable VSTHRD002 // Synchronously waiting on tasks or awaiters may cause deadlocks
-            // Wait with timeout
-            if (task.Wait(_connectionSettings.TimeoutMs, cancellationToken))
-            {
-                return task.Result;
-            }
-            #pragma warning restore VSTHRD002
-            else
-            {
-                // Timeout - return fallback
-                return CreateFallbackSuggestions(pluginContext);
-            }
+#pragma warning disable VSTHRD002 // Synchronously waiting on tasks or awaiters may cause deadlocks
+            // Wait for the task to complete, but rely on the CancellationToken for timeout
+            var result = task.GetAwaiter().GetResult();
+            return result;
+#pragma warning restore VSTHRD002
         }
-        catch
+        catch (TaskCanceledException) when (cancellationToken.IsCancellationRequested)
         {
             return CreateFallbackSuggestions(pluginContext);
         }
-    }
-
-    /// <summary>
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            return CreateFallbackSuggestions(pluginContext);
+        }
+        catch (Exception)
+        {
+            return CreateFallbackSuggestions(pluginContext);
+        }
+    }    /// <summary>
     /// Triggers background cache refresh for better future performance.
     /// This is a fire-and-forget operation that doesn't block.
     /// Note: Currently simplified since client doesn't have cache refresh method.
@@ -261,6 +270,29 @@ public class PluginHelper : IDisposable
         catch
         {
             return default(T);
+        }
+    }
+
+    /// <summary>
+    /// Saves a user command to the backend service for learning purposes.
+    /// This method is called when a command is executed to learn from user patterns.
+    /// </summary>
+    /// <param name="commandLine">The command that was executed</param>
+    /// <param name="success">Whether the command executed successfully</param>
+    /// <returns>Task that completes when command is saved</returns>
+    public async Task SaveCommandAsync(string commandLine, bool success)
+    {
+        if (_isDisposed || string.IsNullOrWhiteSpace(commandLine))
+            return;
+
+        try
+        {
+            // Call the backend service to save the command
+            await _ipcClient.SaveCommandAsync(commandLine, success);
+        }
+        catch
+        {
+            // Don't rethrow - command saving should not fail the main prediction flow
         }
     }
 
