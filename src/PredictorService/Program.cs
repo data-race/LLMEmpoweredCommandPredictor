@@ -105,35 +105,25 @@ public class Program
                     Console.WriteLine($"Prompt template not found at: {promptConfig.TemplatePath}");
                 }
 
-                // Register Cache services with cache-specific file logging
+                // Register Cache services
                 services.AddSingleton<InMemoryCache>(provider =>
                 {
-                    var logger = ConsoleLoggerFactory.CreateCacheLogger<InMemoryCache>();
-                    var cache = new InMemoryCache(new CacheConfiguration(), logger);
-                    
-                    // Initialize cache synchronously to ensure it's ready before service starts
-                    try
-                    {
-                        cache.EnsureInitializedAsync().Wait();
-                        logger.LogInformation("Cache service registered and initialized synchronously");
-                    }
-                    catch (Exception ex)
-                    {
-                        logger.LogError(ex, "Failed to initialize cache during service startup");
-                    }
-                    
+                    var cache = new InMemoryCache(new CacheConfiguration());
+                    Console.WriteLine("Cache service registered successfully");
                     return cache;
                 });
                 services.AddSingleton<CacheKeyGenerator>(provider =>
                 {
-                    var logger = ConsoleLoggerFactory.CreateCacheLogger<CacheKeyGenerator>();
+                    var logger = new ConsoleLogger<CacheKeyGenerator>(LogLevel.Debug, "LLMCommandPredictor_Cache.log");
                     return new CacheKeyGenerator(logger);
                 });
 
-                // Register PredictorServiceBackend directly as ISuggestionService
+                // Register PredictorServiceBackend directly as ISuggestionService for IPC
+                // This creates the correct architecture: IPC -> PredictorServiceBackend -> Cache
                 services.AddSingleton<ISuggestionService>(provider =>
                 {
-                    var logger = ConsoleLoggerFactory.CreateInfoLogger<PredictorServiceBackend>();
+                    // Use shared file logger for backend
+                    var logger = new ConsoleLogger<PredictorServiceBackend>(LogLevel.Information);
                     var contextManager = provider.GetRequiredService<ContextManager>();
                     var cache = provider.GetRequiredService<InMemoryCache>();
                     var keyGenerator = provider.GetRequiredService<CacheKeyGenerator>();

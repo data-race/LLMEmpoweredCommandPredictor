@@ -5,7 +5,6 @@ using System.Linq;
 using System.Management.Automation.Subsystem.Prediction;
 using System.Threading;
 using System.Threading.Tasks;
-using Microsoft.Extensions.Logging;
 
 namespace LLMEmpoweredCommandPredictor.PredictorCache;
 
@@ -19,11 +18,17 @@ public class InMemoryCache : ICacheService, IDisposable
 {
     private readonly CacheConfiguration config;
     private readonly ConcurrentDictionary<string, LinkedList<CacheEntry>> cache;
+    private readonly ConcurrentDictionary<string, DateTime> keyLastAccess; // NEW: from master
     private readonly Timer? cleanupTimer;
-    private readonly ILogger<InMemoryCache>? logger;
+    private readonly object lockObject = new object(); // NEW: from master
 
-    // Configuration for entries per key
+    // Configuration for entries per key (from 93dec1a)
     private const int MaxEntriesPerKey = 10;
+    
+    // NEW: Configuration constants for prefix-based caching (from master)
+    private const int MAX_PREFIX_LENGTH = 50;
+    private const int MAX_TOTAL_KEYS = 1000;
+    private const int MAX_SUGGESTIONS_RETURNED = 5;
 
     // Statistics tracking
     private long totalRequests;
@@ -46,16 +51,14 @@ public class InMemoryCache : ICacheService, IDisposable
     /// </summary>
     /// <param name="config">Cache configuration options</param>
     /// <param name="logger">Optional logger for debugging</param>
-    public InMemoryCache(CacheConfiguration config, ILogger<InMemoryCache>? logger = null)
+    public InMemoryCache(CacheConfiguration config)
     {
         this.config = config ?? throw new ArgumentNullException(nameof(config));
-        this.logger = logger;
+        
         cache = new ConcurrentDictionary<string, LinkedList<CacheEntry>>();
+        keyLastAccess = new ConcurrentDictionary<string, DateTime>();
         startTime = DateTime.UtcNow;
         lastAccessTime = startTime;
-
-        logger?.LogInformation("PredictorCache: InMemoryCache initialized with MaxCapacity={MaxCapacity}, DefaultTtl={DefaultTtl}, CleanupInterval={CleanupInterval}",
-            config.MaxCapacity, config.DefaultTtl, config.CleanupInterval);
 
         // Pre-populate cache with basic commands during initialization
         // NEED TO BE DELETED, ONLY FOR TESTING
@@ -70,8 +73,7 @@ public class InMemoryCache : ICacheService, IDisposable
                 dueTime: this.config.CleanupInterval,
                 period: this.config.CleanupInterval);
 
-            logger?.LogDebug("PredictorCache: Background cleanup timer started");
-        }
+            }
     }
 
     /// <inheritdoc />
@@ -82,8 +84,6 @@ public class InMemoryCache : ICacheService, IDisposable
 
         Interlocked.Increment(ref totalRequests);
         lastAccessTime = DateTime.UtcNow;
-
-        logger?.LogDebug("PredictorCache: GetAsync called for key: {CacheKey}", cacheKey);
 
         if (cache.TryGetValue(cacheKey, out var entryList) && entryList.Count > 0)
         {
@@ -98,8 +98,7 @@ public class InMemoryCache : ICacheService, IDisposable
             // Check if entry is expired
             if (entry.IsExpired)
             {
-                logger?.LogDebug("PredictorCache: Cache entry expired for key: {CacheKey}", cacheKey);
-                // Remove expired entry from the list
+                        // Remove expired entry from the list
                 entryList.RemoveFirst();
 
                 // Clean up any other expired entries from the front
@@ -119,12 +118,10 @@ public class InMemoryCache : ICacheService, IDisposable
             entry.LastAccessTime = DateTime.UtcNow;
 
             Interlocked.Increment(ref cacheHits);
-            logger?.LogDebug("PredictorCache: Cache HIT for key: {CacheKey}", cacheKey);
-            return entry.Response;
+                return entry.Response;
         }
 
         Interlocked.Increment(ref cacheMisses);
-        logger?.LogDebug("PredictorCache: Cache MISS for key: {CacheKey}", cacheKey);
         return null;
     }
 
@@ -190,9 +187,6 @@ public class InMemoryCache : ICacheService, IDisposable
         if (string.IsNullOrEmpty(cacheKey) || string.IsNullOrEmpty(response))
             return;
 
-        logger?.LogDebug("PredictorCache: SetAsync called for key: {CacheKey}, response length: {ResponseLength}",
-            cacheKey, response.Length);
-
         var now = DateTime.UtcNow;
         var entry = new CacheEntry(response)
         {
@@ -219,9 +213,6 @@ public class InMemoryCache : ICacheService, IDisposable
                 return existingList;
             });
 
-        logger?.LogDebug("PredictorCache: Cache entry stored for key: {CacheKey}, total keys: {TotalKeys}",
-            cacheKey, cache.Count);
-
         await Task.CompletedTask;
     }
 
@@ -232,8 +223,6 @@ public class InMemoryCache : ICacheService, IDisposable
             return;
 
         cache.TryRemove(cacheKey, out _);
-
-        logger?.LogDebug("PredictorCache: Removed cache key: {CacheKey}", cacheKey);
 
         await Task.CompletedTask;
     }
@@ -247,8 +236,6 @@ public class InMemoryCache : ICacheService, IDisposable
         Interlocked.Exchange(ref totalRequests, 0);
         Interlocked.Exchange(ref cacheHits, 0);
         Interlocked.Exchange(ref cacheMisses, 0);
-
-        logger?.LogDebug("PredictorCache: Cache cleared");
 
         await Task.CompletedTask;
     }
@@ -293,8 +280,6 @@ public class InMemoryCache : ICacheService, IDisposable
     {
         if (disposed)
             return;
-
-        logger?.LogInformation("PredictorCache: Background cleanup started at {Time}", DateTime.UtcNow);
 
         var keysToRemove = new List<string>();
         var cleanedCount = 0;
@@ -349,13 +334,12 @@ public class InMemoryCache : ICacheService, IDisposable
 
             if (cleanedCount > 0 || keysToRemove.Count > 0)
             {
-                logger?.LogDebug("PredictorCache: Background cleanup removed {CleanedEntries} expired entries and {EmptyKeys} empty keys",
-                    cleanedCount, keysToRemove.Count);
+                // Cleanup completed
             }
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            logger?.LogWarning(ex, "PredictorCache: Error during background cleanup");
+            // Silently handle cleanup errors
         }
     }
 
@@ -401,12 +385,10 @@ public class InMemoryCache : ICacheService, IDisposable
         // Simple flag to prevent multiple initializations
         if (cache.Count > 0)
         {
-            logger?.LogDebug("PredictorCache: Cache already initialized, skipping");
-            return;
+                return;
         }
 
         await InitializeCacheWithBasicCommandsAsync();
-        logger?.LogInformation("PredictorCache: Cache initialization completed via EnsureInitializedAsync");
     }
 
     /// ----------------------------- TO BE DELETED WHEN SETASYNC IS PROPERLY CALLED -----------------------------
@@ -419,9 +401,7 @@ public class InMemoryCache : ICacheService, IDisposable
     {
         try
         {
-            logger?.LogInformation("PredictorCache: Starting cache initialization with basic commands");
-
-            // Define basic command patterns and their suggestions (as simple JSON without PredictiveSuggestion objects)
+                // Define basic command patterns and their suggestions (as simple JSON without PredictiveSuggestion objects)
             var basicCommands = new Dictionary<string, string>
             {
                 // Git commands - main suggestions
@@ -490,24 +470,42 @@ public class InMemoryCache : ICacheService, IDisposable
                 {
                     // Use SetAsync to store the data (this will call the method we want to test)
                     await SetAsync(cacheKey, response);
-
-                    logger?.LogDebug("PredictorCache: Initialized cache entry for key: {CacheKey}", cacheKey);
                 }
-                catch (Exception ex)
+                catch (Exception)
                 {
-                    logger?.LogWarning("PredictorCache: Failed to cache suggestions for '{CacheKey}': {Error}",
-                        cacheKey, ex.Message);
+                    // Silently handle individual cache entry errors
                 }
             }
 
             // Log cache statistics after initialization
             var stats = GetStatistics();
-            logger?.LogInformation("PredictorCache: Cache initialization complete. Total entries: {TotalEntries}, Memory usage: {MemoryUsageMB:F2} MB",
-                stats.TotalEntries, stats.MemoryUsageBytes / (1024.0 * 1024.0));
         }
-        catch (Exception ex)
+        catch (Exception)
         {
-            logger?.LogError(ex, "PredictorCache: Error during cache initialization");
+            // Silently handle initialization errors
         }
+    }
+
+    /// <summary>
+    /// NEW: Normalizes cache keys for prefix-based grouping (from master)
+    /// Converts cache keys to normalized form for consistent storage and retrieval
+    /// </summary>
+    /// <param name="key">Original cache key</param>
+    /// <returns>Normalized cache key</returns>
+    private string NormalizeKey(string key)
+    {
+        if (string.IsNullOrEmpty(key))
+            return string.Empty;
+
+        // Convert to lowercase and trim whitespace
+        var normalized = key.Trim().ToLowerInvariant();
+        
+        // Limit the prefix length to prevent memory issues
+        if (normalized.Length > MAX_PREFIX_LENGTH)
+        {
+            normalized = normalized.Substring(0, MAX_PREFIX_LENGTH);
+        }
+
+        return normalized;
     }
 }

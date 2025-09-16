@@ -34,7 +34,7 @@ dotnet build -c Release
 
 ```powershell
 Import-Module ".\bin\Release\LLMEmpoweredCommandPredictor\net6.0\LLMEmpoweredCommandPredictor.dll" -Verbose
-Set-PSReadLineOption -PredictionSource HistoryAndPlugin
+Set-PSReadLineOption -PredictionSource Plugin
 ```
 
 4. Start using the command predictor:

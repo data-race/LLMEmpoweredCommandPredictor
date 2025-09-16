@@ -88,26 +88,3 @@ public class ConsoleLogger<T> : ILogger<T>
         public void Dispose() { }
     }
 }
-
-/// <summary>
-/// Factory for creating console loggers
-/// </summary>
-public static class ConsoleLoggerFactory
-{
-    /// <summary>
-    /// Creates a console logger for debugging cache operations
-    /// Set to Debug level to see detailed cache operations
-    /// </summary>
-    public static ILogger<T> CreateDebugLogger<T>() => new ConsoleLogger<T>(LogLevel.Debug);
-    
-    /// <summary>
-    /// Creates a console logger for general information
-    /// </summary>
-    public static ILogger<T> CreateInfoLogger<T>() => new ConsoleLogger<T>(LogLevel.Information);
-    
-    /// <summary>
-    /// Creates a cache-specific logger that writes to a separate file
-    /// Logs to $env:TEMP\LLMCommandPredictor_Cache.log
-    /// </summary>
-    public static ILogger<T> CreateCacheLogger<T>() => new ConsoleLogger<T>(LogLevel.Debug, "LLMCommandPredictor_Cache.log");
-}
