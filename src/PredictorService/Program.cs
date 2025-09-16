@@ -77,7 +77,7 @@ public class Program
                 {
                     TemplatePath = Path.GetFullPath(Path.Combine(
                         AppDomain.CurrentDomain.BaseDirectory,
-                        "..", "..", "..", "..", "Prompt", "LLMSuggestionPromptTemplateV1.txt"))
+                        "..", "..", "..", "..", "Prompt", "LLMSuggestionPromptTemplateV2.txt"))
                 };
 
                 // Register Azure OpenAI service if configuration is valid
