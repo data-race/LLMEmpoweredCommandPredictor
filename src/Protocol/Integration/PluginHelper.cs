@@ -287,16 +287,11 @@ public class PluginHelper : IDisposable
 
         try
         {
-            Console.WriteLine($"[PluginHelper] Saving command: '{commandLine}' (success: {success})");
-            
             // Call the backend service to save the command
             await _ipcClient.SaveCommandAsync(commandLine, success);
-            
-            Console.WriteLine($"[PluginHelper] Command saved successfully: '{commandLine}'");
         }
-        catch (Exception ex)
+        catch
         {
-            Console.WriteLine($"[PluginHelper] Failed to save command '{commandLine}': {ex.Message}");
             // Don't rethrow - command saving should not fail the main prediction flow
         }
     }
