@@ -9,6 +9,7 @@ if (-not (Test-Path $llmPredictorPath)) {
 
 $sessionHistoryFilePath = Join-Path $llmPredictorPath "PowerShellSessionHistory.txt"
 $healthLogFilePath = Join-Path $llmPredictorPath "PowerShellSessionHistory_Health.log"
+$historySignFilePath = Join-Path $llmPredictorPath "Get-History-Sign.txt"
 
 # Ensure the files exist and clear them at the start of the session.
 if (Test-Path -Path $sessionHistoryFilePath) {
@@ -54,6 +55,35 @@ $script:timerRunCount = 0
 
 # Register the timer event - simple approach: just overwrite with last 50 entries
 $timerAction = Register-ObjectEvent -InputObject $timer -EventName Elapsed -Action {
+    # Function to calculate hash of Get-History output (defined inside the action for scope access)
+    function Get-HistoryHash {
+        param($historyEntries)
+        if (-not $historyEntries -or $historyEntries.Count -eq 0) {
+            return ""
+        }
+        
+        # Create a string representation of the history for hashing
+        $historyString = ""
+        foreach ($entry in $historyEntries) {
+            if ($entry.CommandLine -ne $null -and $entry.CommandLine -ne "") {
+                $historyString += $entry.CommandLine + "|"
+            } elseif ($entry -ne $null) {
+                $historyString += $entry.ToString() + "|"
+            }
+        }
+        
+        # Calculate SHA256 hash
+        $stringAsStream = [System.IO.MemoryStream]::new()
+        $writer = [System.IO.StreamWriter]::new($stringAsStream)
+        $writer.write($historyString)
+        $writer.Flush()
+        $stringAsStream.Position = 0
+        $hash = Get-FileHash -InputStream $stringAsStream -Algorithm SHA256
+        $writer.Dispose()
+        $stringAsStream.Dispose()
+        
+        return $hash.Hash
+    }
     try {
         # Increment timer run count
         $script:timerRunCount++
@@ -64,6 +94,7 @@ $timerAction = Register-ObjectEvent -InputObject $timer -EventName Elapsed -Acti
         $llmPredictorPath = Join-Path $appDataPath "LLMCommandPredictor"
         $sessionHistoryFilePath = Join-Path $llmPredictorPath "PowerShellSessionHistory.txt"
         $healthLogFilePath = Join-Path $llmPredictorPath "PowerShellSessionHistory_Health.log"
+        $historySignFilePath = Join-Path $llmPredictorPath "Get-History-Sign.txt"
         
         # Log timer activity
         "$timestamp - Timer run #$($script:timerRunCount)" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
@@ -82,36 +113,58 @@ $timerAction = Register-ObjectEvent -InputObject $timer -EventName Elapsed -Acti
                 $last50 = $history | Select-Object -Last 50
                 "$timestamp - Selected last $($last50.Count) entries" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
                 
-                # Clear the file and write all entries
-                $historyContent = @()
-                foreach ($entry in $last50) {
-                    try {
-                        if ($entry -and $entry.StartTime) {
-                            $timestamp_entry = $entry.StartTime.ToString("yyyy-MM-dd HH:mm:ss")
-                        } else {
-                            $timestamp_entry = $timestamp
-                        }
-                        
-                        if ($entry.CommandLine -ne $null -and $entry.CommandLine -ne "") {
-                            $command = $entry.CommandLine
-                        } elseif ($entry -ne $null) {
-                            $command = $entry.ToString()
-                        } else {
-                            $command = "[Unknown Command]"
-                        }
-                        
-                        $historyContent += "$timestamp_entry [$command]"
-                    } catch {
-                        "$timestamp - ERROR processing individual entry: $($_.Exception.Message)" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
-                    }
-                }
+                # Calculate hash of current history
+                $currentHash = Get-HistoryHash -historyEntries $last50
+                "$timestamp - Current history hash: $currentHash" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
                 
-                if ($historyContent.Count -gt 0) {
-                    # Overwrite the entire file with the current history
-                    $historyContent | Out-File -FilePath $sessionHistoryFilePath -Encoding UTF8
-                    "$timestamp - Successfully wrote $($historyContent.Count) entries to file" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
+                # Read previous hash if it exists
+                $previousHash = ""
+                if (Test-Path $historySignFilePath) {
+                    $previousHash = Get-Content $historySignFilePath -ErrorAction SilentlyContinue
+                }
+                "$timestamp - Previous history hash: $previousHash" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
+                
+                # Only update files if hash has changed (i.e., there are new commands)
+                if ($currentHash -ne $previousHash) {
+                    "$timestamp - History has changed, updating files" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
+                    
+                    # Clear the file and write all entries
+                    $historyContent = @()
+                    foreach ($entry in $last50) {
+                        try {
+                            if ($entry -and $entry.StartTime) {
+                                $timestamp_entry = $entry.StartTime.ToString("yyyy-MM-dd HH:mm:ss")
+                            } else {
+                                $timestamp_entry = $timestamp
+                            }
+                            
+                            if ($entry.CommandLine -ne $null -and $entry.CommandLine -ne "") {
+                                $command = $entry.CommandLine
+                            } elseif ($entry -ne $null) {
+                                $command = $entry.ToString()
+                            } else {
+                                $command = "[Unknown Command]"
+                            }
+                            
+                            $historyContent += "$timestamp_entry [$command]"
+                        } catch {
+                            "$timestamp - ERROR processing individual entry: $($_.Exception.Message)" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
+                        }
+                    }
+                    
+                    if ($historyContent.Count -gt 0) {
+                        # Update the main history file
+                        $historyContent | Out-File -FilePath $sessionHistoryFilePath -Encoding UTF8
+                        "$timestamp - Successfully wrote $($historyContent.Count) entries to history file" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
+                        
+                        # Update the hash signature file
+                        $currentHash | Out-File -FilePath $historySignFilePath -Encoding UTF8
+                        "$timestamp - Updated hash signature file with new commands" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
+                    } else {
+                        "$timestamp - No valid history content to write" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
+                    }
                 } else {
-                    "$timestamp - No valid history content to write" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
+                    "$timestamp - No changes in history, skipping file updates" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
                 }
             } else {
                 "$timestamp - No history entries found or history is null" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
@@ -140,10 +193,41 @@ $Global:HistoryCollectionJob = $timerAction
 
 # Ensure cleanup when the session ends
 $endSessionHandler = {
+    # Function to calculate hash of Get-History output (defined inside the handler for scope access)
+    function Get-HistoryHash {
+        param($historyEntries)
+        if (-not $historyEntries -or $historyEntries.Count -eq 0) {
+            return ""
+        }
+        
+        # Create a string representation of the history for hashing
+        $historyString = ""
+        foreach ($entry in $historyEntries) {
+            if ($entry.CommandLine -ne $null -and $entry.CommandLine -ne "") {
+                $historyString += $entry.CommandLine + "|"
+            } elseif ($entry -ne $null) {
+                $historyString += $entry.ToString() + "|"
+            }
+        }
+        
+        # Calculate SHA256 hash
+        $stringAsStream = [System.IO.MemoryStream]::new()
+        $writer = [System.IO.StreamWriter]::new($stringAsStream)
+        $writer.write($historyString)
+        $writer.Flush()
+        $stringAsStream.Position = 0
+        $hash = Get-FileHash -InputStream $stringAsStream -Algorithm SHA256
+        $writer.Dispose()
+        $stringAsStream.Dispose()
+        
+        return $hash.Hash
+    }
+    
     try {
         $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
         $healthLogFilePath = "$env:USERPROFILE\Documents\PowerShellSessionHistory_Health.log"
         $sessionHistoryFilePath = "$env:USERPROFILE\Documents\PowerShellSessionHistory.txt"
+        $historySignFilePath = "$env:USERPROFILE\Documents\Get-History-Sign.txt"
         
         "$timestamp - Session ending, starting cleanup" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
         
@@ -159,6 +243,11 @@ $endSessionHandler = {
             $historyContent += "$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss') [# Session ended]"
             $historyContent | Out-File -FilePath $sessionHistoryFilePath -Encoding UTF8
             "$timestamp - Final save completed with $($history.Count) entries" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
+            
+            # Update hash signature with final state
+            $finalHash = Get-HistoryHash -historyEntries $history
+            $finalHash | Out-File -FilePath $historySignFilePath -Encoding UTF8
+            "$timestamp - Updated final hash signature" | Out-File -FilePath $healthLogFilePath -Append -Encoding UTF8
         }
         
         # Cleanup resources
@@ -184,8 +273,10 @@ $endSessionHandler = {
 Register-EngineEvent PowerShell.Exiting -Action $endSessionHandler
 
 # Inform user the listener is active
-Write-Host "Session history listener is active. Last 50 commands will be saved to $sessionHistoryFilePath every 3 seconds."
-Write-Host "Health log will be written to $healthLogFilePath"
+Write-Host "Session history listener is active. Commands will be saved when new commands are detected using hash comparison."
+Write-Host "History file: $sessionHistoryFilePath"
+Write-Host "Hash signature file: $historySignFilePath"
+Write-Host "Health log: $healthLogFilePath"
 
 # Log final setup completion
 $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"

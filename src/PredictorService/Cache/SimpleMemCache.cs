@@ -9,7 +9,7 @@ namespace LLMEmpoweredCommandPredictor.PredictorService.Cache;
 /// </summary>
 public class SimpleMemCache
 {
-    private const int MaxCacheSize = 100;
+    private const int MaxCacheSize = 500;
     private readonly Queue<CacheItem> _cacheQueue = new();
     private readonly Dictionary<string, CacheItem> _cacheDict = new();
     private readonly object _lock = new();

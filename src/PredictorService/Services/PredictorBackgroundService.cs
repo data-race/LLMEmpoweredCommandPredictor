@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.IO.Pipes;
 using System.Text;
+using System.IO;
 
 namespace LLMEmpoweredCommandPredictor.PredictorService.Services;
 
@@ -20,6 +21,8 @@ public class PredictorBackgroundService : BackgroundService
     private readonly AzureOpenAIService? _azureOpenAIService;
     private readonly PromptTemplateService? _promptTemplateService;
     private readonly SimpleMemCache _cache;
+    private readonly string _hashFilePath;
+    private FileSystemWatcher? _hashFileWatcher;
 
     public PredictorBackgroundService(
         ILogger<PredictorBackgroundService> logger,
@@ -33,10 +36,15 @@ public class PredictorBackgroundService : BackgroundService
         _cache = cache;
         _azureOpenAIService = azureOpenAIService;
         _promptTemplateService = promptTemplateService;
+        
+        // Initialize hash file path - same as PowerShell script uses
+        var appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var llmPredictorPath = Path.Combine(appDataPath, "LLMCommandPredictor");
+        _hashFilePath = Path.Combine(llmPredictorPath, "Get-History-Sign.txt");
     }
 
     /// <summary>
-    /// Starts the background service and runs a simple loop with context collection demos.
+    /// Starts the background service and sets up file watching for hash changes.
     /// </summary>
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -52,26 +60,19 @@ public class PredictorBackgroundService : BackgroundService
             // Start the named pipe server task
             var namedPipeTask = Task.Run(() => StartNamedPipeServerAsync(stoppingToken), stoppingToken);
 
-            int counter = 0;
-            
+            // Set up file system watcher for hash file changes
+            SetupHashFileWatcher();
+
+            // Generate initial suggestions on startup
+            _logger.LogInformation("Generating initial LLM suggestions on startup...");
+            await GenerateSuggestionsFromContextAsync(stoppingToken);
+
             // Keep the service running until cancellation is requested
             while (!stoppingToken.IsCancellationRequested)
             {
-                counter++;
-                
-                // Demonstrate context collection every 60 seconds
-                if (counter % 5 == 0)
-                {
-                    await CollectContextAndPredictCommandsAsync(stoppingToken);
-                }
-                
-                // Log periodic status every 30 seconds
-                if (counter % 10 == 0)
-                {
-                    _logger.LogInformation("Service is running... Uptime: {Counter} seconds", counter);
-                }
-                
-                await Task.Delay(1000, stoppingToken);
+                // Log periodic status every 10 seconds
+                await Task.Delay(10000, stoppingToken);
+                _logger.LogInformation("Predictor Background Service is running. Cache size: {CacheSize}", _cache.Count);
             }
         }
         catch (OperationCanceledException)
@@ -86,21 +87,85 @@ public class PredictorBackgroundService : BackgroundService
         finally
         {
             _logger.LogInformation("Predictor Background Service stopping...");
+            _hashFileWatcher?.Dispose();
             _contextManager.Dispose();
         }
     }
 
     /// <summary>
-    /// Demonstrates context collection functionality.
+    /// Sets up file system watcher to monitor changes to the hash file.
     /// </summary>
-    private async Task CollectContextAndPredictCommandsAsync(CancellationToken cancellationToken)
+    private void SetupHashFileWatcher()
     {
         try
         {
-            _logger.LogInformation("Demonstrating context collection and LLM integration...");
+            var hashFileDirectory = Path.GetDirectoryName(_hashFilePath);
+            if (string.IsNullOrEmpty(hashFileDirectory))
+            {
+                _logger.LogError("Invalid hash file path: {HashFilePath}", _hashFilePath);
+                return;
+            }
 
-            // Collect context for a sample user input
-            var context = await _contextManager.CollectContextAsync("Get-Process", cancellationToken);
+            // Ensure the directory exists
+            if (!Directory.Exists(hashFileDirectory))
+            {
+                Directory.CreateDirectory(hashFileDirectory);
+                _logger.LogInformation("Created directory for hash file: {Directory}", hashFileDirectory);
+            }
+
+            _hashFileWatcher = new FileSystemWatcher(hashFileDirectory, "Get-History-Sign.txt")
+            {
+                NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime,
+                EnableRaisingEvents = true
+            };
+
+            _hashFileWatcher.Changed += OnHashFileChanged;
+            _hashFileWatcher.Created += OnHashFileChanged;
+
+            _logger.LogInformation("File system watcher set up for hash file: {HashFilePath}", _hashFilePath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error setting up file system watcher for hash file: {HashFilePath}", _hashFilePath);
+        }
+    }
+
+    /// <summary>
+    /// Handles hash file change events.
+    /// </summary>
+    private void OnHashFileChanged(object sender, FileSystemEventArgs e)
+    {
+        // Fire and forget async operation with proper error handling
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                _logger.LogInformation("Hash file changed: {FilePath}", e.FullPath);
+                
+                // Add a small delay to ensure the file write is complete
+                await Task.Delay(500);
+                
+                // Generate suggestions from current context
+                await GenerateSuggestionsFromContextAsync(CancellationToken.None);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error handling hash file change event");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Generates LLM suggestions from current context.
+    /// </summary>
+    private async Task GenerateSuggestionsFromContextAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            _logger.LogInformation("Generating LLM suggestions from current context...");
+
+            // Collect context for a generic input to get recent history
+            var context = await _contextManager.CollectContextAsync("", cancellationToken);
             
             _logger.LogInformation("Context collected: {Summary}", context.GetSummary());
             _logger.LogInformation("Command history contains {Count} entries", context.CommandHistory.Count);
@@ -114,15 +179,10 @@ public class PredictorBackgroundService : BackgroundService
             {
                 _logger.LogInformation("Azure OpenAI service not configured. Skipping LLM suggestions.");
             }
-
-            // Simulate updating context with a new command
-            await _contextManager.UpdateContextAsync(context, "Get-Process -Name powershell", true, cancellationToken);
-            
-            _logger.LogInformation("Context updated with simulated command execution");
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error during context collection demonstration");
+            _logger.LogError(ex, "Error generating suggestions from context");
         }
     }
 
@@ -248,6 +308,7 @@ public class PredictorBackgroundService : BackgroundService
         
         try
         {
+            _hashFileWatcher?.Dispose();
             _contextManager.Dispose();
             await base.StopAsync(cancellationToken);
         }
