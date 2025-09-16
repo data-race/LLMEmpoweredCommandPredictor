@@ -61,12 +61,15 @@ public class Program
                     return contextManager;
                 });
 
-                // Configure Azure OpenAI settings (can be overridden by environment variables)
+                // Configure Azure OpenAI settings (requires environment variables)
                 var azureOpenAIConfig = new AzureOpenAIConfiguration
                 {
-                    Endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") ?? "https://yongyu-chatgpt-test1.openai.azure.com/",
-                    DeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") ?? "gpt-4.1",
-                    ApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") ?? "c961a6ea9de24724b09ed800a204f59c"
+                    Endpoint = Environment.GetEnvironmentVariable("AZURE_OPENAI_ENDPOINT") 
+                        ?? throw new InvalidOperationException("AZURE_OPENAI_ENDPOINT environment variable is required"),
+                    DeploymentName = Environment.GetEnvironmentVariable("AZURE_OPENAI_DEPLOYMENT") 
+                        ?? throw new InvalidOperationException("AZURE_OPENAI_DEPLOYMENT environment variable is required"),
+                    ApiKey = Environment.GetEnvironmentVariable("AZURE_OPENAI_KEY") 
+                        ?? throw new InvalidOperationException("AZURE_OPENAI_KEY environment variable is required")
                 };
 
                 // Configure prompt template settings
@@ -89,7 +92,7 @@ public class Program
                 }
                 else
                 {
-                    Console.WriteLine("Azure OpenAI configuration not provided. Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_DEPLOYMENT environment variables to enable LLM features.");
+                    Console.WriteLine("Azure OpenAI configuration not provided. Set AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_DEPLOYMENT, and AZURE_OPENAI_KEY environment variables to enable LLM features.");
                 }
 
                 // Register prompt template service if template exists
