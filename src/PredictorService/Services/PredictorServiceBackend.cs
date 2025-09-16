@@ -178,16 +178,24 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
 
             _logger.LogInformation("PredictorServiceBackend: Cache MISS for '{UserInput}', generating new suggestions", request.UserInput);
 
-            // 3. Cache miss - generate suggestions for partial input
-            var generatedSuggestions = GenerateSuggestionsForPartialInput(request.UserInput);
+            // 3. Cache miss - try LLM first, then fallback to pattern-based suggestions
+            var generatedSuggestions = await GenerateLLMSuggestionsAsync(request.UserInput, cancellationToken);
+            var isLLMGenerated = generatedSuggestions.Count > 0;
+            
+            // If LLM didn't generate suggestions, fallback to pattern-based suggestions
+            if (generatedSuggestions.Count == 0)
+            {
+                _logger.LogDebug("PredictorServiceBackend: LLM generated no suggestions, falling back to pattern-based suggestions");
+                generatedSuggestions = GenerateSuggestionsForPartialInput(request.UserInput);
+            }
             
             if (generatedSuggestions.Count > 0)
             {
                 var response = new SuggestionResponse(
                     suggestions: generatedSuggestions,
-                    source: "generated",
+                    source: isLLMGenerated ? "llm_generated" : "pattern_generated", 
                     isFromCache: false,
-                    generationTimeMs: 10.0
+                    generationTimeMs: isLLMGenerated ? 500.0 : 10.0 // LLM takes longer
                 );
                 
                 // Only cache suggestions for longer, more specific inputs
@@ -771,6 +779,99 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
             
             return Task.FromResult(errorResult);
         }
+    }
+
+    /// <summary>
+    /// Generates suggestions using Azure OpenAI LLM service
+    /// </summary>
+    private async Task<List<ProtocolSuggestion>> GenerateLLMSuggestionsAsync(string userInput, CancellationToken cancellationToken)
+    {
+        var suggestions = new List<ProtocolSuggestion>();
+        
+        // Only try LLM if both services are available
+        if (_azureOpenAIService == null || _promptTemplateService == null)
+        {
+            _logger.LogDebug("PredictorServiceBackend: Azure OpenAI or Prompt Template service not available, skipping LLM suggestions");
+            return suggestions;
+        }
+
+        try
+        {
+            _logger.LogDebug("PredictorServiceBackend: Generating LLM suggestions for '{UserInput}'", userInput);
+            
+            // Collect context for the LLM prompt
+            var context = await _contextManager.CollectContextAsync(userInput, cancellationToken);
+            
+            // Merge context with prompt template
+            var prompt = await _promptTemplateService.MergeContextWithTemplateAsync(context);
+            
+            // Call Azure OpenAI
+            var llmResponse = await _azureOpenAIService.GenerateCommandSuggestionsAsync(prompt, cancellationToken);
+            
+            if (!string.IsNullOrWhiteSpace(llmResponse))
+            {
+                // Try to parse LLM response as JSON
+                try
+                {
+                    var jsonDoc = JsonDocument.Parse(llmResponse);
+                    if (jsonDoc.RootElement.TryGetProperty("suggestions", out var suggestionsArray))
+                    {
+                        foreach (var suggestion in suggestionsArray.EnumerateArray())
+                        {
+                            if (suggestion.ValueKind == JsonValueKind.String)
+                            {
+                                var suggestionText = suggestion.GetString();
+                                if (!string.IsNullOrWhiteSpace(suggestionText))
+                                {
+                                    suggestions.Add(new ProtocolSuggestion(suggestionText));
+                                }
+                            }
+                            else if (suggestion.ValueKind == JsonValueKind.Object)
+                            {
+                                if (suggestion.TryGetProperty("text", out var textProp) || 
+                                    suggestion.TryGetProperty("command", out textProp) ||
+                                    suggestion.TryGetProperty("suggestion", out textProp))
+                                {
+                                    var suggestionText = textProp.GetString();
+                                    if (!string.IsNullOrWhiteSpace(suggestionText))
+                                    {
+                                        suggestions.Add(new ProtocolSuggestion(suggestionText));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogWarning(ex, "PredictorServiceBackend: Failed to parse LLM response as JSON, treating as plain text: {Response}", llmResponse);
+                    
+                    // If JSON parsing fails, try to extract commands from plain text
+                    var lines = llmResponse.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                    foreach (var line in lines.Take(5)) // Limit to 5 suggestions
+                    {
+                        var cleanLine = line.Trim(' ', '-', '*', '•', '\t');
+                        if (!string.IsNullOrWhiteSpace(cleanLine) && cleanLine.Length > 2)
+                        {
+                            suggestions.Add(new ProtocolSuggestion(cleanLine));
+                        }
+                    }
+                }
+                
+                _logger.LogInformation("PredictorServiceBackend: Generated {Count} LLM suggestions for '{UserInput}'", 
+                    suggestions.Count, userInput);
+            }
+            else
+            {
+                _logger.LogWarning("PredictorServiceBackend: Empty response from Azure OpenAI for '{UserInput}'", userInput);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "PredictorServiceBackend: Error generating LLM suggestions for '{UserInput}'", userInput);
+        }
+
+        return suggestions;
     }
 
     public void Dispose()
