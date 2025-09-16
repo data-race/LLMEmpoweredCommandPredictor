@@ -21,7 +21,7 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         internal LLMEmpoweredCommandPredictor(string guid)
         {
             _guid = new Guid(guid);
-            _logger = ConsoleLoggerFactory.CreateDebugLogger<LLMEmpoweredCommandPredictor>();
+            _logger = new ConsoleLogger<LLMEmpoweredCommandPredictor>(LogLevel.Debug, "LLMCommandPredictor_Plugin.log");
             _suggestionProvider = new LLMSuggestionProvider();
         }
 

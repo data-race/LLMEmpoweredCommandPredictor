@@ -21,7 +21,7 @@ public class LLMSuggestionProvider : ILLMSuggestionProvider
     public LLMSuggestionProvider()
     {
         // Create a console logger for the plugin
-        _logger = ConsoleLoggerFactory.CreateDebugLogger<LLMSuggestionProvider>();
+        _logger = new ConsoleLogger<LLMSuggestionProvider>(LogLevel.Debug, "LLMCommandPredictor_Plugin.log");
         _pluginHelper = new PluginHelper();
     }
 
