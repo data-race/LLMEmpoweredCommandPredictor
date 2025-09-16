@@ -21,7 +21,7 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         internal LLMEmpoweredCommandPredictor(string guid)
         {
             _guid = new Guid(guid);
-            _logger = new ConsoleLogger<LLMEmpoweredCommandPredictor>(LogLevel.Debug, "LLMCommandPredictor_Plugin.log");
+            _logger = new ConsoleLogger<LLMEmpoweredCommandPredictor>(LogLevel.Critical, "LLMCommandPredictor_Plugin.log");
             _suggestionProvider = new LLMSuggestionProvider();
         }
 
@@ -125,9 +125,6 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         /// <param name="acceptedSuggestion">The accepted suggestion text.</param>
         public void OnSuggestionAccepted(PredictionClient client, uint session, string acceptedSuggestion) 
         {
-            _logger.LogInformation("PowerShell Plugin: Suggestion accepted: '{AcceptedSuggestion}' (session: {Session})", 
-                acceptedSuggestion, session);
-            
             // Save the accepted suggestion to cache to reinforce successful predictions
             if (!string.IsNullOrWhiteSpace(acceptedSuggestion))
             {
@@ -158,8 +155,6 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
             if (history != null && history.Count > 0)
             {
                 var latestCommand = history[history.Count - 1];
-                _logger.LogInformation("PowerShell Plugin: Command line accepted: '{Command}' (client: {Client})", 
-                    latestCommand, client.Name);
                 
                 // Save the accepted command to the cache immediately (fire-and-forget)
                 // This is more reliable than OnCommandLineExecuted as it's called immediately when user hits Enter
@@ -190,9 +185,6 @@ namespace PowerShell.Sample.LLMEmpoweredCommandPredictor
         /// <param name="success">Shows whether the execution was successful.</param>
         public void OnCommandLineExecuted(PredictionClient client, string commandLine, bool success) 
         {
-            _logger.LogInformation("PowerShell Plugin: Command executed: '{Command}' (success: {Success}, client: {Client})", 
-                commandLine, success, client.Name);
-            
             // Save the executed command to the cache (fire-and-forget)
             if (!string.IsNullOrWhiteSpace(commandLine))
             {

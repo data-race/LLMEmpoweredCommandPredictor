@@ -47,8 +47,11 @@ public class ConsoleLogger<T> : ILogger<T>
             // Always write to file
             File.AppendAllText(logFilePath, logEntry + Environment.NewLine);
             
-            // Only write to console for non-DEBUG levels
-            if (logLevel != LogLevel.Debug)
+            // Skip console output for PowerShell plugin to avoid cluttering output
+            bool isPowerShellPlugin = categoryName.Contains("LLMEmpoweredCommandPredictor");
+            
+            // Only write to console for non-DEBUG levels and non-PowerShell plugin
+            if (logLevel != LogLevel.Debug && !isPowerShellPlugin)
             {
                 Console.WriteLine(logEntry);
             }
@@ -58,8 +61,8 @@ public class ConsoleLogger<T> : ILogger<T>
                 var exceptionEntry = $"[{timestamp}] [{levelString}] [{categoryName}] Exception: {exception}";
                 File.AppendAllText(logFilePath, exceptionEntry + Environment.NewLine);
                 
-                // Only write exception to console for non-DEBUG levels
-                if (logLevel != LogLevel.Debug)
+                // Only write exception to console for non-DEBUG levels and non-PowerShell plugin
+                if (logLevel != LogLevel.Debug && !isPowerShellPlugin)
                 {
                     Console.WriteLine(exceptionEntry);
                 }
