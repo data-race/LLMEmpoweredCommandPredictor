@@ -89,11 +89,11 @@ public class PromptTemplateService
             var promptContext = new PromptContextData
             {
                 GlobalCommandsHistory = context.CommandHistory
-                    .Take(100)
+                    .Take(300)
                     .Select(h => h.Command)
                     .ToList(), 
                 PreviousCommands = context.SessionHistory
-                    .Take(10) // Get last 20 commands
+                    .Take(5) // Get last 5 commands
                     .Select(h => h.Command)
                     .ToList(),
                 CurrentDirectory = context.WorkingDirectory,
@@ -127,6 +127,7 @@ public class PromptTemplateService
                 DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
             };
 
+            _logger.LogInformation("using previous commands: {0}", promptContext.PreviousCommands);
             return JsonSerializer.Serialize(promptContext, options);
         }
         catch (Exception ex)

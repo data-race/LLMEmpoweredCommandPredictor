@@ -201,8 +201,8 @@ public class SessionHistoryContextProvider : IContextProvider
                 }
             }
 
-            // Sort by timestamp to ensure chronological order
-            historyEntries.Sort((a, b) => a.ExecutedAt.CompareTo(b.ExecutedAt));
+            // reverse the history to make sure the order
+            historyEntries.Reverse();
 
             _logger.LogDebug("Read {Count} session history entries from file", historyEntries.Count);
             return historyEntries;

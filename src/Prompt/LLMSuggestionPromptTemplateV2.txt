@@ -201,6 +201,7 @@ Output 3:
 - Ensure suggestions are **contextually continuous** - each command should make sense as the next step
 - Confidence scores should reflect how naturally the command continues the current workflow
 - Avoid suggesting commands that break the workflow continuity unless explicitly indicated by context
+- Switch quickly: when you notice user just executed another command that is different, you need to switch quickly to generate suggestions based on that command
 
 ## Additional Rules:
 - Only suggest commands that are valid for the tools listed in installedModules
