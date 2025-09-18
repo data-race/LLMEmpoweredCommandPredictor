@@ -60,7 +60,7 @@ public class AzureOpenAIService
             // Create chat completion options
             var options = new ChatCompletionOptions
             {
-                Temperature = 0.3f, // Lower temperature for more focused suggestions
+                Temperature = 0.01f, // Lower temperature for more focused suggestions
                 MaxTokens = 1000,
                 TopP = 0.95f,
                 FrequencyPenalty = 0.0f,

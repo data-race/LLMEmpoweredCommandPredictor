@@ -214,7 +214,14 @@ Output 3:
 Here are some hints for you to generate suggestions with high quality:
 - When a user just created a folder, the next step is possibly `ls` or `cd`.
 - When a user just entered a folder, the next step is possibly `ls`
+- When a user just entered a new folder, the next step is possibly `git init` and then `git remote add origin`
 - git add -> git commit -> git push is a common workflow in git
+
+## Domain knowledge
+I, as a user, usually works with some Microsoft Exchange cmdlet and Places cmdlet to manage company places like Conference room and desk. There are some hints for you to generate related suggestions:
+- User may use `New-Mailbox -room <room-name> -Organization <organization domain>` to create a mailbox for a bookable room or desk. For example: `New-Mailbox Conference-Room-1 -Organization test-org.com`. Then user can use `Set-PlaceV3 -Identity Converence-Room-1@test-org.com` to set the room properties.
+- After create the mailbox, user may also use `Set-Mailbox $mbx.Identity -Type Desk` to set it type for a bookable desk.
+- User can use `Get-PlaceV3 -Identity <mailbox>` to get the place.
 
 # Your Task
 Using the context provided below, analyze the `previousCommands` sequence to understand the current workflow, then generate 10 PowerShell command suggestions that logically continue this workflow.
