@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Management.Automation.Subsystem.Prediction;
 using System.Threading;
@@ -21,6 +22,8 @@ public class InMemoryCache : ICacheService, IDisposable
     private readonly ConcurrentDictionary<string, DateTime> keyLastAccess; // NEW: from master
     private readonly Timer? cleanupTimer;
     private readonly object lockObject = new object(); // NEW: from master
+    private readonly string logFilePath;
+    private readonly object logLock = new object();
 
     // Configuration for entries per key (from 93dec1a)
     private const int MaxEntriesPerKey = 10;
@@ -60,6 +63,13 @@ public class InMemoryCache : ICacheService, IDisposable
         startTime = DateTime.UtcNow;
         lastAccessTime = startTime;
 
+        // Initialize log file path
+        var tempPath = Environment.GetEnvironmentVariable("TEMP") ?? Path.GetTempPath();
+        logFilePath = Path.Combine(tempPath, "LLMCommandPredictor_Cache.log");
+
+        // Log cache initialization
+        LogToFile("Cache initialized", "INFO");
+
         // Start background cleanup timer if enabled
         if (this.config.EnableBackgroundCleanup)
         {
@@ -88,6 +98,7 @@ public class InMemoryCache : ICacheService, IDisposable
             if (entry == null)
             {
                 Interlocked.Increment(ref cacheMisses);
+                LogToFile("Cache MISS - entry null", "DEBUG", cacheKey);
                 return null;
             }
 
@@ -107,6 +118,7 @@ public class InMemoryCache : ICacheService, IDisposable
                 }
 
                 Interlocked.Increment(ref cacheMisses);
+                LogToFile("Cache MISS - entry expired", "DEBUG", cacheKey);
                 return null;
             }
 
@@ -114,10 +126,12 @@ public class InMemoryCache : ICacheService, IDisposable
             entry.LastAccessTime = DateTime.UtcNow;
 
             Interlocked.Increment(ref cacheHits);
+            LogToFile($"Cache HIT - response length: {entry.Response.Length}", "DEBUG", cacheKey);
                 return entry.Response;
         }
 
         Interlocked.Increment(ref cacheMisses);
+        LogToFile("Cache MISS - key not found", "DEBUG", cacheKey);
         return null;
     }
 
@@ -191,6 +205,8 @@ public class InMemoryCache : ICacheService, IDisposable
             CreatedTime = now
         };
 
+        LogToFile("Cache SET called");
+
         // Add entry to LinkedList (newest entries go to the front)
         cache.AddOrUpdate(cacheKey,
             // Create new LinkedList with this entry if key doesn't exist
@@ -209,6 +225,7 @@ public class InMemoryCache : ICacheService, IDisposable
                 return existingList;
             });
 
+        LogToFile($"Cache SET - response length: {response.Length}, TTL: {config.DefaultTtl.TotalMinutes:F1}min", "DEBUG", cacheKey);
         await Task.CompletedTask;
     }
 
@@ -218,7 +235,8 @@ public class InMemoryCache : ICacheService, IDisposable
         if (string.IsNullOrEmpty(cacheKey))
             return;
 
-        cache.TryRemove(cacheKey, out _);
+        var removed = cache.TryRemove(cacheKey, out _);
+        LogToFile($"Cache REMOVE - success: {removed}", "DEBUG", cacheKey);
 
         await Task.CompletedTask;
     }
@@ -226,6 +244,7 @@ public class InMemoryCache : ICacheService, IDisposable
     /// <inheritdoc />
     public async Task ClearAsync(CancellationToken cancellationToken = default)
     {
+        var entriesBeforeClear = cache.Count;
         cache.Clear();
 
         // Reset statistics (except start time)
@@ -233,6 +252,7 @@ public class InMemoryCache : ICacheService, IDisposable
         Interlocked.Exchange(ref cacheHits, 0);
         Interlocked.Exchange(ref cacheMisses, 0);
 
+        LogToFile($"Cache CLEAR - removed {entriesBeforeClear} entries, statistics reset", "INFO");
         await Task.CompletedTask;
     }
 
@@ -373,6 +393,7 @@ public class InMemoryCache : ICacheService, IDisposable
         GC.SuppressFinalize(this);
     }
     
+    /*
     /// <summary>
     /// Ensures cache is initialized with basic commands. Can be called multiple times safely.
     /// </summary>
@@ -381,12 +402,12 @@ public class InMemoryCache : ICacheService, IDisposable
         // Simple flag to prevent multiple initializations
         if (cache.Count > 0)
         {
-                return;
+            return;
         }
 
         await InitializeCacheWithBasicCommandsAsync();
     }
-
+    
     /// ----------------------------- TO BE DELETED WHEN SETASYNC IS PROPERLY CALLED -----------------------------
     /// <summary>
     /// Pre-populates the cache with basic PowerShell commands using prefix-based keys.
@@ -480,7 +501,7 @@ public class InMemoryCache : ICacheService, IDisposable
         {
             // Silently handle initialization errors
         }
-    }
+    }*/
 
     /// <summary>
     /// NEW: Normalizes cache keys for prefix-based grouping (from master)
@@ -503,5 +524,38 @@ public class InMemoryCache : ICacheService, IDisposable
         }
 
         return normalized;
+    }
+
+    /// <summary>
+    /// Logs cache operations to the specified log file.
+    /// </summary>
+    /// <param name="message">The message to log</param>
+    /// <param name="level">The log level (INFO, DEBUG, WARNING, ERROR)</param>
+    /// <param name="cacheKey">Optional cache key for context</param>
+    private void LogToFile(string message, string level = "INFO", string? cacheKey = null)
+    {
+        try
+        {
+            lock (logLock)
+            {
+                var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                var logEntry = $"[{timestamp}] [{level}] InMemoryCache: {message}";
+                
+                if (!string.IsNullOrEmpty(cacheKey))
+                {
+                    logEntry += $" | Key: '{cacheKey}'";
+                }
+                
+                // Add cache statistics to the log entry
+                var stats = GetStatistics();
+                logEntry += $" | Stats: Hits={stats.CacheHits}, Misses={stats.CacheMisses}, Entries={stats.TotalEntries}";
+                
+                File.AppendAllText(logFilePath, logEntry + Environment.NewLine);
+            }
+        }
+        catch
+        {
+            // Silently handle logging errors to prevent cache operations from failing
+        }
     }
 }

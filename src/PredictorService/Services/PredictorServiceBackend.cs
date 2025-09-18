@@ -176,50 +176,16 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
                     }
                 }
 
-            _logger.LogInformation("PredictorServiceBackend: Cache MISS for '{UserInput}', generating new suggestions", request.UserInput);
+            _logger.LogInformation("PredictorServiceBackend: Cache MISS for '{UserInput}', returning empty suggestions", request.UserInput);
 
-            // 3. Cache miss - generate suggestions for partial input
-            var generatedSuggestions = GenerateSuggestionsForPartialInput(request.UserInput);
-            
-            if (generatedSuggestions.Count > 0)
-            {
-                var response = new SuggestionResponse(
-                    suggestions: generatedSuggestions,
-                    source: "generated",
-                    isFromCache: false,
-                    generationTimeMs: 10.0
-                );
-                
-                // Only cache suggestions for longer, more specific inputs
-                // Don't cache generic suggestions for very short partial inputs like "gi", "do", etc.
-                if (request.UserInput.Length >= 4 && !IsGenericPartialInput(request.UserInput))
-                {
-                    try
-                    {
-                        var jsonResponse = System.Text.Json.JsonSerializer.Serialize(response);
-                        await _cache.SetAsync(cacheKey, jsonResponse, cancellationToken);
-                        _logger.LogDebug("PredictorServiceBackend: Cached suggestions for specific input: '{UserInput}'", request.UserInput);
-                    }
-                    catch (Exception cacheEx)
-                    {
-                        _logger.LogWarning("PredictorServiceBackend: Failed to cache generated suggestions: {Error}", cacheEx.Message);
-                    }
-                }
-                else
-                {
-                    _logger.LogDebug("PredictorServiceBackend: Skipping cache for generic partial input: '{UserInput}'", request.UserInput);
-                }
-                
-                return response;
-            }
-            else
-            {
-                return new SuggestionResponse(
-                    suggestions: new List<ProtocolSuggestion>(),
-                    source: "generated",
-                    warningMessage: "No suggestions available for this input"
-                );
-            }
+            // 4. Cache miss - do nothing, return empty suggestions
+            return new SuggestionResponse(
+                suggestions: new List<ProtocolSuggestion>(),
+                source: "cache_miss",
+                isFromCache: false,
+                generationTimeMs: 1.0,
+                warningMessage: "No cached suggestions available for this input"
+            );
         }
         catch (OperationCanceledException)
         {
@@ -301,59 +267,91 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
             return;
         }
 
+        // Only process successful commands
+        if (!success)
+        {
+            _logger.LogDebug("PredictorServiceBackend: Skipping failed command: '{CommandLine}'", commandLine);
+            return;
+        }
+
         try
         {
-            _logger.LogInformation("PredictorServiceBackend: Saving command to cache: '{CommandLine}' (success: {Success})", 
-                commandLine, success);
+            _logger.LogInformation("PredictorServiceBackend: Processing executed command for LLM caching: '{CommandLine}'", commandLine);
 
             // Generate cache key for the command
             var request = new SuggestionRequest(commandLine, maxSuggestions: 5);
             var cacheKey = _keyGenerator.GenerateCacheKey(request);
             
-            // Check if we already have this command cached to avoid overwriting
+            // Check if we already have this command cached
             var existingCache = await _cache.GetAsync(cacheKey, cancellationToken);
-            if (existingCache != null && !success)
+            if (existingCache != null)
             {
-                // Don't overwrite successful cached commands with failed ones
-                _logger.LogDebug("PredictorServiceBackend: Command already cached, skipping failed execution: '{CommandLine}'", commandLine);
+                _logger.LogDebug("PredictorServiceBackend: Command already cached, skipping: '{CommandLine}'", commandLine);
                 return;
             }
-            
-            // For failed commands, only cache if we don't have a successful version
-            if (!success && existingCache == null)
-            {
-                _logger.LogDebug("PredictorServiceBackend: Skipping failed command (no successful version exists): '{CommandLine}'", commandLine);
-                return;
-            }
-            
-            // Create suggestions based on the executed command
-            var suggestions = GenerateSuggestionsForCommand(commandLine);
-            if (suggestions.Count > 0)
-            {
-                // Convert suggestions to JSON format for cache storage
-                var suggestionResponse = new SuggestionResponse(
-                    suggestions: suggestions,
-                    source: "user_command",
-                    isFromCache: false,
-                    generationTimeMs: 1.0
-                );
 
-                var jsonResponse = System.Text.Json.JsonSerializer.Serialize(suggestionResponse);
-                
-                // Save to cache
-                await _cache.SetAsync(cacheKey, jsonResponse, cancellationToken);
-                
-                _logger.LogInformation("PredictorServiceBackend: Successfully cached {Count} suggestions for command: '{CommandLine}'", 
-                    suggestions.Count, commandLine);
+            // Call LLM to get suggestions for this executed command
+            if (_azureOpenAIService != null && _promptTemplateService != null)
+            {
+                try
+                {
+                    _logger.LogDebug("PredictorServiceBackend: Calling LLM for executed command: '{CommandLine}'", commandLine);
+                    
+                    // Create context for LLM
+                    var context = await CreateContextForLLMAsync(commandLine, cancellationToken);
+                    
+                    // Generate prompt
+                    var prompt = await _promptTemplateService.MergeContextWithTemplateAsync(context);
+                    
+                    // Call LLM
+                    var llmResponse = await _azureOpenAIService.GenerateCommandSuggestionsAsync(prompt, cancellationToken);
+                    
+                    if (!string.IsNullOrWhiteSpace(llmResponse))
+                    {
+                        // Parse LLM response and extract suggestions
+                        var llmSuggestions = ParseLLMResponse(llmResponse);
+                        if (llmSuggestions.Count > 0)
+                        {
+                            // Store LLM results in cache using setAsync
+                            var suggestionResponse = new SuggestionResponse(
+                                suggestions: llmSuggestions,
+                                source: "llm_execution",
+                                isFromCache: false,
+                                generationTimeMs: 1.0
+                            );
+
+                            var jsonResponse = System.Text.Json.JsonSerializer.Serialize(suggestionResponse);
+                            
+                            // Save LLM results to cache
+                            await _cache.SetAsync(cacheKey, jsonResponse, cancellationToken);
+                            
+                            _logger.LogInformation("PredictorServiceBackend: Cached {Count} LLM suggestions for executed command: '{CommandLine}' using setAsync", 
+                                llmSuggestions.Count, commandLine);
+                        }
+                        else
+                        {
+                            _logger.LogDebug("PredictorServiceBackend: LLM returned no suggestions for command: '{CommandLine}'", commandLine);
+                        }
+                    }
+                    else
+                    {
+                        _logger.LogDebug("PredictorServiceBackend: LLM returned empty response for command: '{CommandLine}'", commandLine);
+                    }
+                }
+                catch (Exception llmEx)
+                {
+                    _logger.LogWarning("PredictorServiceBackend: LLM call failed for executed command '{CommandLine}': {Error}", 
+                        commandLine, llmEx.Message);
+                }
             }
             else
             {
-                _logger.LogDebug("PredictorServiceBackend: No suggestions generated for command: '{CommandLine}'", commandLine);
+                _logger.LogDebug("PredictorServiceBackend: LLM services not available, skipping caching for command: '{CommandLine}'", commandLine);
             }
         }
         catch (Exception ex)
         {
-            _logger.LogWarning("PredictorServiceBackend: Failed to save command to cache: {Error}", ex.Message);
+            _logger.LogWarning("PredictorServiceBackend: Failed to process executed command: {Error}", ex.Message);
         }
     }
 
@@ -647,6 +645,8 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
     {
         try
         {
+            _logger.LogDebug("PredictorServiceBackend: cachedJson {cachedJson}", cachedJson);
+
             // Parse the JSON format
             using var document = JsonDocument.Parse(cachedJson);
             var root = document.RootElement;
@@ -771,6 +771,149 @@ public class PredictorServiceBackend : ISuggestionService, IDisposable
             
             return Task.FromResult(errorResult);
         }
+    }
+
+    /// <summary>
+    /// Creates a context for LLM processing based on user input
+    /// </summary>
+    private async Task<PredictorContext> CreateContextForLLMAsync(string userInput, CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Use the context manager to collect context for the input
+            var context = await _contextManager.CollectContextAsync(userInput, cancellationToken);
+            return context;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("PredictorServiceBackend: Failed to create context for LLM: {Error}", ex.Message);
+            
+            // Return a minimal context on error
+            return new PredictorContext
+            {
+                SessionId = Guid.NewGuid().ToString(),
+                Timestamp = DateTime.UtcNow,
+                WorkingDirectory = Environment.CurrentDirectory,
+                CommandHistory = new List<CommandHistoryEntry>(),
+                SessionHistory = new List<CommandHistoryEntry>()
+            };
+        }
+    }
+
+    /// <summary>
+    /// Parses the LLM response and extracts suggestions
+    /// </summary>
+    private List<ProtocolSuggestion> ParseLLMResponse(string llmResponse)
+    {
+        var suggestions = new List<ProtocolSuggestion>();
+
+        _logger.LogDebug("PredictorServiceBackend: In ParseLLMResponse... {llmResponse}", llmResponse);
+
+        try
+        {
+            _logger.LogDebug("PredictorServiceBackend: Parsing LLM response: {ResponseLength} characters", llmResponse.Length);
+
+            // Try to parse as JSON first
+            if (_azureOpenAIService?.IsValidJsonResponse(llmResponse) == true)
+            {
+                using var document = JsonDocument.Parse(llmResponse);
+                var root = document.RootElement;
+
+                // Look for suggestions in various possible JSON structures
+                JsonElement suggestionsElement;
+                if (root.TryGetProperty("suggestions", out suggestionsElement) ||
+                    root.TryGetProperty("commands", out suggestionsElement) ||
+                    root.TryGetProperty("recommendations", out suggestionsElement))
+                {
+                    foreach (var item in suggestionsElement.EnumerateArray())
+                    {
+                        string? suggestionText = null;
+
+                        if (item.ValueKind == JsonValueKind.String)
+                        {
+                            suggestionText = item.GetString();
+                        }
+                        else if (item.ValueKind == JsonValueKind.Object)
+                        {
+                            // Try different property names
+                            if (item.TryGetProperty("command", out var cmdElement))
+                                suggestionText = cmdElement.GetString();
+                            else if (item.TryGetProperty("text", out var textElement))
+                                suggestionText = textElement.GetString();
+                            else if (item.TryGetProperty("suggestion", out var suggElement))
+                                suggestionText = suggElement.GetString();
+                        }
+
+                        if (!string.IsNullOrWhiteSpace(suggestionText))
+                        {
+                            suggestions.Add(new ProtocolSuggestion(suggestionText.Trim()));
+                        }
+                    }
+                }
+            }
+
+            // If JSON parsing didn't work or didn't find suggestions, try text parsing
+            if (suggestions.Count == 0)
+            {
+                // Split by lines and look for command-like patterns
+                var lines = llmResponse.Split(new[] { '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+
+                foreach (var line in lines)
+                {
+                    var trimmedLine = line.Trim();
+
+                    // Skip empty lines and obvious non-commands
+                    if (string.IsNullOrWhiteSpace(trimmedLine) ||
+                        trimmedLine.Length < 2 ||
+                        trimmedLine.StartsWith("//") ||
+                        trimmedLine.StartsWith("#") ||
+                        trimmedLine.Contains("Here are") ||
+                        trimmedLine.Contains("suggestions:"))
+                        continue;
+
+                    // Remove common prefixes
+                    var cleanLine = trimmedLine;
+                    if (cleanLine.StartsWith("- "))
+                        cleanLine = cleanLine.Substring(2);
+                    if (cleanLine.StartsWith("* "))
+                        cleanLine = cleanLine.Substring(2);
+                    if (char.IsDigit(cleanLine[0]) && cleanLine.Contains(". "))
+                        cleanLine = cleanLine.Substring(cleanLine.IndexOf(". ") + 2);
+
+                    cleanLine = cleanLine.Trim();
+
+                    // Basic validation for command-like strings
+                    if (cleanLine.Length >= 3 &&
+                        !cleanLine.Contains("?") &&
+                        !cleanLine.Contains("...") &&
+                        (cleanLine.Contains("git") || cleanLine.Contains("Get-") ||
+                         cleanLine.Contains("docker") || cleanLine.Contains("dotnet") ||
+                         cleanLine.Contains("cd") || cleanLine.Contains("ls")))
+                    {
+                        suggestions.Add(new ProtocolSuggestion(cleanLine));
+
+                        // Limit to avoid too many suggestions
+                        if (suggestions.Count >= 5)
+                            break;
+                    }
+                }
+            }
+
+            _logger.LogInformation("PredictorServiceBackend: Parsed {Count} suggestions from LLM response", suggestions.Count);
+
+            // Log the suggestions for debugging
+            if (suggestions.Count > 0)
+            {
+                _logger.LogDebug("PredictorServiceBackend: LLM suggestions: [{Suggestions}]",
+                    string.Join(", ", suggestions.Select(s => $"'{s.SuggestionText}'")));
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning("PredictorServiceBackend: Error parsing LLM response: {Error}", ex.Message);
+        }
+        
+        return suggestions;
     }
 
     public void Dispose()
